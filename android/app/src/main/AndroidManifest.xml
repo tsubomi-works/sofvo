@@ -71,5 +71,18 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- url_launcher の canLaunchUrl/launchUrl が https/http のURL（LINE共有等）を
+             正しく検出できるようにするための宣言。Android 11+ のパッケージ可視性制限により、
+             これが無いと実際には開けるURLでも canLaunchUrl が false を返すことがある。 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="http"/>
+        </intent>
     </queries>
 </manifest>
