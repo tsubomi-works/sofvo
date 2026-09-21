@@ -10,7 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
 import '../../config/app_theme.dart';
 import '../../services/follow_service.dart';
 import '../../widgets/official_badge.dart';
@@ -80,6 +80,83 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addObserver(this);
     // アプリ起動時にバッジを正確な未読数に同期
     PushNotificationService.updateBadgeCount();
+    // アプリ起動時、未対応（未承認）の大会エントリー招待があればポップアップで知らせる
+    _checkPendingEntryInvites();
+  }
+
+  // 通知ベルを開かないと気づけない問題への対策。
+  // notifications の read フラグではなく、entryDrafts の実際の承認状態
+  // （approvals[uid] == 'pending'）を見るので、一度ベルを開いただけでは消えない。
+  Future<void> _checkPendingEntryInvites() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collectionGroup('entryDrafts')
+          .where('invitedUids', arrayContains: uid)
+          .get();
+      final pending = snap.docs.where((d) {
+        final data = d.data();
+        final leaderUid = (data['leaderUid'] ?? '').toString();
+        final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+        final myState = (approvals[uid] ?? 'pending').toString();
+        return leaderUid != uid && myState == 'pending';
+      }).toList();
+      if (pending.isEmpty || !mounted) return;
+
+      final items = pending.map((d) {
+        final data = d.data();
+        return {
+          'tournamentId': d.reference.parent.parent!.id,
+          'teamName': (data['teamName'] ?? '').toString(),
+          'leaderName': (data['leaderName'] ?? '').toString(),
+        };
+      }).toList();
+
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(children: [
+            Icon(Icons.how_to_reg, color: AppTheme.primaryColor),
+            SizedBox(width: 8),
+            Expanded(child: Text('対応が必要な招待があります', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+          ]),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: items.map((item) {
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.groups, color: AppTheme.primaryColor),
+                  title: Text('「${item['teamName']}」への招待', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  subtitle: Text('${item['leaderName']} さんから', style: const TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final doc = await FirebaseFirestore.instance
+                        .collection('tournaments').doc(item['tournamentId'] as String).get();
+                    if (!doc.exists || !mounted) return;
+                    final tData = doc.data()!;
+                    tData['id'] = doc.id;
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => TournamentDetailScreen(tournament: tData),
+                    ));
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('あとで')),
+          ],
+        ),
+      );
+    } catch (e) {
+      debugPrint('承認待ちエントリー招待の確認に失敗: $e');
+    }
   }
 
   @override

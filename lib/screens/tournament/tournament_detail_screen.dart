@@ -49,6 +49,18 @@ class TournamentDetailScreen extends StatefulWidget {
 
 class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     with SingleTickerProviderStateMixin {
+  // 承認待ちエントリー招待を「開いた（既読）」記録の二重送信防止
+  final Set<String> _markedSeenDraftIds = {};
+
+  void _markEntryDraftSeenIfNeeded(String draftId) {
+    if (_markedSeenDraftIds.contains(draftId)) return;
+    _markedSeenDraftIds.add(draftId);
+    FirebaseFunctions.instance.httpsCallable('markEntryDraftSeen').call({
+      'tournamentId': _tournamentId,
+      'draftId': draftId,
+    }).catchError((_) {});
+  }
+
   void _syncFollowingFromService() {
     if (_viewerIsOfficial != true) return;
     if (!mounted) return;
@@ -5843,6 +5855,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                     FollowerMemberPicker(
                       uid: uid,
                       selectedMembers: selectedMembers,
+                      tournamentId: _tournamentId,
+                      excludeEntryId: entryDocId,
                       onToggle: (fUid, fName) {
                         setSheetState(() {
                           if (selectedMembers.containsKey(fUid)) {
@@ -6014,6 +6028,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                     FollowerMemberPicker(
                       uid: uid,
                       selectedMembers: selectedMembers,
+                      tournamentId: _tournamentId,
                       onToggle: (fUid, fName) {
                         setSheetState(() {
                           if (selectedMembers.containsKey(fUid)) {
@@ -6122,10 +6137,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             final isMemberAdd = data['type'] == 'memberAdd';
             final invited = List<String>.from((data['invitedUids'] as List<dynamic>?) ?? []);
             final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+            final seenAt = Map<String, dynamic>.from(data['seenAt'] as Map? ?? {});
             final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
             final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
             final isLeader = leaderUid == uid;
             final myState = (approvals[uid] ?? 'pending').toString();
+
+            if (!isLeader && myState == 'pending') {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _markEntryDraftSeenIfNeeded(d.id));
+            }
 
             return Container(
               width: double.infinity,
@@ -6155,8 +6175,17 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                     ...invited.where((u) => u != uid).map((u) {
                       final st = (approvals[u] ?? 'pending').toString();
                       final nm = (memberNames[u] ?? '?').toString();
-                      final label = st == 'approved' ? '承認済み' : st == 'declined' ? '辞退' : '承認待ち';
-                      final c = st == 'approved' ? AppTheme.success : st == 'declined' ? AppTheme.error : AppTheme.textSecondary;
+                      final seen = seenAt[u] != null;
+                      final label = st == 'approved'
+                          ? '承認済み'
+                          : st == 'declined'
+                              ? '辞退'
+                              : (seen ? '既読・未回答' : '未読');
+                      final c = st == 'approved'
+                          ? AppTheme.success
+                          : st == 'declined'
+                              ? AppTheme.error
+                              : (seen ? AppTheme.accentColor : AppTheme.textHint);
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 3),
                         child: Row(children: [

@@ -9,13 +9,60 @@ class FollowerMemberPicker extends StatefulWidget {
   final String uid;
   final Map<String, String> selectedMembers;
   final void Function(String uid, String name) onToggle;
+  /// 指定すると、この大会で既に成立エントリー／承認待ちドラフトに
+  /// 含まれている人を選択不可（グレーアウト）にする。
+  final String? tournamentId;
+  /// エントリー編集時、自分自身のエントリーIDは重複チェックから除外する
+  /// （このエントリー自身のメンバーを「他で使用中」と誤判定しないため）。
+  final String? excludeEntryId;
 
   const FollowerMemberPicker({
     super.key,
     required this.uid,
     required this.selectedMembers,
     required this.onToggle,
+    this.tournamentId,
+    this.excludeEntryId,
   });
+
+  /// 大会内で既に「成立エントリー」または「辞退していない承認待ちドラフト」に
+  /// 含まれている uid → チーム名。createEntryDraft/updateEntryMembers の
+  /// サーバー側重複チェックと同じロジック（クライアント側の事前案内用）。
+  static Future<Map<String, String>> loadTakenMap(
+    String tournamentId, {
+    String? excludeEntryId,
+  }) async {
+    final taken = <String, String>{};
+    try {
+      final tRef = FirebaseFirestore.instance.collection('tournaments').doc(tournamentId);
+      final results = await Future.wait([
+        tRef.collection('entries').get(),
+        tRef.collection('entryDrafts').get(),
+      ]);
+      final entriesSnap = results[0];
+      final draftsSnap = results[1];
+      for (final d in entriesSnap.docs) {
+        if (d.id == excludeEntryId) continue;
+        final data = d.data();
+        final uids = List<String>.from((data['memberUids'] as List?) ?? []);
+        for (final u in uids) {
+          taken[u] = (data['teamName'] ?? '既存のチーム').toString();
+        }
+      }
+      for (final d in draftsSnap.docs) {
+        final data = d.data();
+        final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+        final invited = List<String>.from((data['invitedUids'] as List?) ?? []);
+        for (final u in invited) {
+          if (approvals[u] == 'declined') continue;
+          taken[u] = (data['teamName'] ?? '招待中のチーム').toString();
+        }
+      }
+    } catch (_) {
+      // 取得に失敗しても選択自体は続行する（最終的にはサーバー側で弾かれる）
+    }
+    return taken;
+  }
 
   /// uid → 一緒にエントリーした回数。ダイアログを開き直しても再計算しないようキャッシュ
   static final Map<String, Map<String, int>> _teammateCountsCache = {};
@@ -133,6 +180,10 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                 Future.wait(followings
                     .map((f) => firestore.collection('users').doc(f.id).get())),
                 FollowerMemberPicker.loadTeammateCounts(widget.uid),
+                widget.tournamentId != null
+                    ? FollowerMemberPicker.loadTakenMap(widget.tournamentId!,
+                        excludeEntryId: widget.excludeEntryId)
+                    : Future.value(<String, String>{}),
               ]),
               builder: (context, snap) {
                 if (!snap.hasData) {
@@ -144,6 +195,7 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                 }
                 final userDocs = snap.data![0] as List<DocumentSnapshot>;
                 final counts = snap.data![1] as Map<String, int>;
+                final taken = snap.data![2] as Map<String, String>;
 
                 // 表示リストを構築（検索フィルタ → よく組む人順）
                 final items = <_PickerItem>[];
@@ -161,6 +213,7 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                     name: name,
                     avatarUrl: (data['avatarUrl'] ?? '').toString(),
                     teammateCount: counts[followings[i].id] ?? 0,
+                    takenByTeamName: taken[followings[i].id],
                   ));
                 }
                 items.sort((a, b) {
@@ -187,33 +240,47 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                       final item = items[index];
                       final isSelected =
                           widget.selectedMembers.containsKey(item.uid);
+                      // 既に選択中（このエントリー自身のメンバー）なら、他で
+                      // 使用中でも選択解除できるよう通常表示のままにする
+                      final isTaken = item.takenByTeamName != null && !isSelected;
                       return ListTile(
                         dense: item.teammateCount == 0,
-                        leading: item.avatarUrl.isNotEmpty
-                            ? CircleAvatar(
-                                backgroundImage: NetworkImage(item.avatarUrl),
-                                radius: 18)
-                            : CircleAvatar(
-                                radius: 18,
-                                backgroundColor: AppTheme.primaryColor
-                                    .withValues(alpha: 0.1),
-                                child: Text(
-                                    item.name.isNotEmpty ? item.name[0] : '?',
-                                    style: const TextStyle(
-                                        color: AppTheme.primaryColor))),
+                        enabled: !isTaken,
+                        leading: Opacity(
+                          opacity: isTaken ? 0.4 : 1,
+                          child: item.avatarUrl.isNotEmpty
+                              ? CircleAvatar(
+                                  backgroundImage: NetworkImage(item.avatarUrl),
+                                  radius: 18)
+                              : CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor: AppTheme.primaryColor
+                                      .withValues(alpha: 0.1),
+                                  child: Text(
+                                      item.name.isNotEmpty ? item.name[0] : '?',
+                                      style: const TextStyle(
+                                          color: AppTheme.primaryColor))),
+                        ),
                         title: Text(item.name,
-                            style: const TextStyle(fontSize: 14)),
-                        subtitle: item.teammateCount > 0
-                            ? Text('一緒にエントリー ${item.teammateCount}回',
-                                style: TextStyle(
-                                    fontSize: 11, color: AppTheme.accentColor))
-                            : null,
-                        trailing: isSelected
-                            ? const Icon(Icons.check_circle,
-                                color: AppTheme.primaryColor)
-                            : Icon(Icons.circle_outlined,
-                                color: Colors.grey[400]),
-                        onTap: () => widget.onToggle(item.uid, item.name),
+                            style: TextStyle(
+                                fontSize: 14,
+                                color: isTaken ? Colors.grey[400] : null)),
+                        subtitle: isTaken
+                            ? Text('「${item.takenByTeamName}」に招待中/エントリー済み',
+                                style: TextStyle(fontSize: 11, color: Colors.grey[400]))
+                            : item.teammateCount > 0
+                                ? Text('一緒にエントリー ${item.teammateCount}回',
+                                    style: TextStyle(
+                                        fontSize: 11, color: AppTheme.accentColor))
+                                : null,
+                        trailing: isTaken
+                            ? Icon(Icons.block, color: Colors.grey[400], size: 20)
+                            : isSelected
+                                ? const Icon(Icons.check_circle,
+                                    color: AppTheme.primaryColor)
+                                : Icon(Icons.circle_outlined,
+                                    color: Colors.grey[400]),
+                        onTap: isTaken ? null : () => widget.onToggle(item.uid, item.name),
                       );
                     },
                   ),
@@ -244,10 +311,12 @@ class _PickerItem {
   final String name;
   final String avatarUrl;
   final int teammateCount;
+  final String? takenByTeamName;
   _PickerItem({
     required this.uid,
     required this.name,
     required this.avatarUrl,
     required this.teammateCount,
+    this.takenByTeamName,
   });
 }
