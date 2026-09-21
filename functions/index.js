@@ -3407,6 +3407,29 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
   return { finalized: result.finalized, declined: !!result.declined, memberAdd: !!result.memberAdd };
 });
 
+// 招待された本人が承認待ちバナーを開いた（＝招待を目にした）ことを記録する。
+// キャプテン側に「既読・未回答」/「未読」を出し分けるためだけの軽量な既読フラグ。
+// 承認/辞退の判定には一切使わない（approvals が唯一の正）。
+exports.markEntryDraftSeen = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const uid = context.auth.uid;
+  const tournamentId = data && data.tournamentId ? String(data.tournamentId) : "";
+  const draftId = data && data.draftId ? String(data.draftId) : "";
+  if (!tournamentId || !draftId) throw new functions.https.HttpsError("invalid-argument", "パラメータが不足しています");
+
+  const db = admin.firestore();
+  const draftRef = db.collection("tournaments").doc(tournamentId).collection("entryDrafts").doc(draftId);
+  const snap = await draftRef.get();
+  if (!snap.exists) return { ok: false };
+  const draft = snap.data() || {};
+  const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+  if (!invited.includes(uid)) throw new functions.https.HttpsError("permission-denied", "この招待の対象ではありません");
+  if ((draft.seenAt || {})[uid]) return { ok: true, alreadySeen: true };
+
+  await draftRef.update({ [`seenAt.${uid}`]: admin.firestore.FieldValue.serverTimestamp() });
+  return { ok: true };
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 成立済みエントリーの編集（チーム名・メンバー入替）— キャプテンのみ
 // 削除・チーム名変更は即時反映。追加メンバーは entryDrafts
@@ -4311,6 +4334,77 @@ exports.debugFollowRelation = functions.https.onCall(async (data, context) => {
     aCanSelectBInEntry: aFollowsBDoc.exists && userBDoc.exists,
     bCanSelectAInEntry: bFollowsADoc.exists && userADoc.exists,
     mismatches,
+  };
+});
+
+// ── 一時デバッグ用: 特定ユーザーの大会エントリー招待状況を確認（管理者のみ）──
+// 「招待した側が、ちゃんと相手に届いているか知りたい」の確認用。
+// entryDrafts（全大会横断）での招待状況（承認/既読/未読）と、
+// 本人の notifications に entry_invite が実際に作成されているかを返す。
+exports.debugEntryInviteStatus = functions.https.onCall(async (data, context) => {
+  const db = admin.firestore();
+  await assertAdmin(context, db);
+
+  let uid = data && data.uid ? String(data.uid) : "";
+  let userSnap = null;
+  if (!uid && data && data.name) {
+    const norm = normalizeForSearch(String(data.name));
+    const snap = await db.collection("users").where("nicknameNorm", "==", norm).limit(10).get();
+    if (snap.size === 0) {
+      throw new functions.https.HttpsError("not-found", `「${data.name}」に一致するユーザーが見つかりません`);
+    }
+    if (snap.size > 1) {
+      throw new functions.https.HttpsError("failed-precondition",
+        `「${data.name}」に一致するユーザーが複数います: ` +
+          snap.docs.map((d) => `${d.data().nickname || ""}(${d.id})`).join(", "));
+    }
+    uid = snap.docs[0].id;
+    userSnap = snap.docs[0];
+  }
+  if (!uid) throw new functions.https.HttpsError("invalid-argument", "uid または name を指定してください");
+  if (!userSnap) userSnap = await db.collection("users").doc(uid).get();
+
+  const [draftsSnap, notifSnap] = await Promise.all([
+    db.collectionGroup("entryDrafts").where("invitedUids", "array-contains", uid).get(),
+    db.collection("users").doc(uid).collection("notifications")
+      .where("type", "==", "entry_invite").orderBy("createdAt", "desc").limit(20).get(),
+  ]);
+
+  const drafts = draftsSnap.docs.map((d) => {
+    const dd = d.data() || {};
+    const approvals = dd.approvals || {};
+    const seenAt = dd.seenAt || {};
+    return {
+      tournamentId: d.ref.parent.parent.id,
+      draftId: d.id,
+      teamName: dd.teamName || "",
+      leaderName: dd.leaderName || "",
+      isLeader: dd.leaderUid === uid,
+      myApproval: approvals[uid] || "pending",
+      mySeen: !!seenAt[uid],
+      approvedCount: Object.values(approvals).filter((v) => v === "approved").length,
+      totalInvited: Array.isArray(dd.invitedUids) ? dd.invitedUids.length : 0,
+    };
+  });
+
+  const notifications = notifSnap.docs.map((d) => {
+    const nd = d.data() || {};
+    return {
+      teamName: nd.teamName || "",
+      tournamentName: nd.tournamentName || "",
+      read: nd.read === true,
+      createdAt: nd.createdAt ? nd.createdAt.toDate().toISOString() : null,
+    };
+  });
+
+  return {
+    uid,
+    nickname: userSnap.exists ? (userSnap.data().nickname || null) : null,
+    // このユーザーが承認待ちのまま止まっている招待（キャプテン視点でも自分視点でも使える）
+    pendingForMe: drafts.filter((x) => x.myApproval === "pending" && !x.isLeader),
+    allDrafts: drafts,
+    // notifications ドキュメントが実際に作られているか（通知作成自体が失敗していないかの確認）
+    entryInviteNotifications: notifications,
   };
 });
 
