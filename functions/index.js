@@ -4228,6 +4228,92 @@ exports.adminDeleteUser = functions.https.onCall(async (data, context) => {
   return { ok: true, uid, nickname, authDeleted };
 });
 
+// ── 一時デバッグ用: 2ユーザー間のフォロー関係を診断（管理者のみ）──
+// 「相互フォローのはずなのにエントリー画面のメンバー選択に出てこない」等の
+// 調査用。following/followers の食い違いや、相手のユーザー本体ドキュメントが
+// 存在するか（エントリー画面のピッカーが doc.exists で弾いていないか）を返す。
+// uidA/uidB を直接指定するか、nameA/nameB でニックネーム検索も可能
+// （完全一致のみ。曖昧・ヒットなしの場合は候補一覧またはエラーを返す）。
+exports.debugFollowRelation = functions.https.onCall(async (data, context) => {
+  const db = admin.firestore();
+  await assertAdmin(context, db);
+
+  async function resolveUser(label, uidParam, nameParam) {
+    if (uidParam) {
+      const doc = await db.collection("users").doc(String(uidParam)).get();
+      return { uid: String(uidParam), doc };
+    }
+    if (nameParam) {
+      const norm = normalizeForSearch(String(nameParam));
+      const snap = await db.collection("users").where("nicknameNorm", "==", norm).limit(10).get();
+      if (snap.size === 0) {
+        throw new functions.https.HttpsError(
+          "not-found",
+          `${label}: 「${nameParam}」に一致するユーザーが見つかりません`,
+        );
+      }
+      if (snap.size > 1) {
+        throw new functions.https.HttpsError(
+          "failed-precondition",
+          `${label}: 「${nameParam}」に一致するユーザーが複数います。uid${label}で指定し直してください: ` +
+            snap.docs.map((d) => `${d.data().nickname || ""}(${d.id})`).join(", "),
+        );
+      }
+      return { uid: snap.docs[0].id, doc: snap.docs[0] };
+    }
+    throw new functions.https.HttpsError("invalid-argument", `uid${label} または name${label} を指定してください`);
+  }
+
+  const a = await resolveUser("A", data && data.uidA, data && data.nameA);
+  const b = await resolveUser("B", data && data.uidB, data && data.nameB);
+  const uidA = a.uid;
+  const uidB = b.uid;
+
+  const [
+    userADoc, userBDoc,
+    aFollowsBDoc, bFollowsADoc,
+    bFollowersHasADoc, aFollowersHasBDoc,
+  ] = await Promise.all([
+    Promise.resolve(a.doc),
+    Promise.resolve(b.doc),
+    db.collection("users").doc(uidA).collection("following").doc(uidB).get(),
+    db.collection("users").doc(uidB).collection("following").doc(uidA).get(),
+    db.collection("users").doc(uidB).collection("followers").doc(uidA).get(),
+    db.collection("users").doc(uidA).collection("followers").doc(uidB).get(),
+  ]);
+
+  const mismatches = [];
+  if (!userADoc.exists) mismatches.push("Aのユーザー本体ドキュメントが存在しません（削除済みアカウントの可能性）");
+  if (!userBDoc.exists) mismatches.push("Bのユーザー本体ドキュメントが存在しません（削除済みアカウントの可能性）");
+  if (aFollowsBDoc.exists !== bFollowersHasADoc.exists) {
+    mismatches.push(
+      `A→B: following(${aFollowsBDoc.exists}) と B側のfollowers(${bFollowersHasADoc.exists}) が食い違っています`,
+    );
+  }
+  if (bFollowsADoc.exists !== aFollowersHasBDoc.exists) {
+    mismatches.push(
+      `B→A: following(${bFollowsADoc.exists}) と A側のfollowers(${aFollowersHasBDoc.exists}) が食い違っています`,
+    );
+  }
+  if (aFollowsBDoc.exists && !userBDoc.exists) {
+    mismatches.push("AはBをフォロー中と記録されているが、Bの本体ドキュメントが無いため、AのエントリーメンバーピッカーにBは出ません");
+  }
+  if (bFollowsADoc.exists && !userADoc.exists) {
+    mismatches.push("BはAをフォロー中と記録されているが、Aの本体ドキュメントが無いため、BのエントリーメンバーピッカーにAは出ません");
+  }
+
+  return {
+    a: { uid: uidA, exists: userADoc.exists, nickname: userADoc.exists ? (userADoc.data().nickname || null) : null },
+    b: { uid: uidB, exists: userBDoc.exists, nickname: userBDoc.exists ? (userBDoc.data().nickname || null) : null },
+    aFollowsB: aFollowsBDoc.exists,
+    bFollowsA: bFollowsADoc.exists,
+    // FollowerMemberPicker と同じ条件（following doc + 相手の本体ドキュメントが存在）
+    aCanSelectBInEntry: aFollowsBDoc.exists && userBDoc.exists,
+    bCanSelectAInEntry: bFollowsADoc.exists && userADoc.exists,
+    mismatches,
+  };
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // フォロー数の自動更新（Firestoreトリガー）
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
