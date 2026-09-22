@@ -618,9 +618,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         _SocialLinkIcons(socialLinks: socialLinks),
                       ],
                       const SizedBox(height: 12),
-                      // ── フォロー / フォロワー ※公式アカウントは非表示 ──
-                      if (!isOfficial)
-                        _FollowCounts(userId: widget.userId),
+                      // ── フォロー / フォロワー ──
+                      _FollowCounts(userId: widget.userId),
                       // ── フォロー / メッセージ ボタン ──
                       if (_showOtherView) ...[
                         const SizedBox(height: 12),
