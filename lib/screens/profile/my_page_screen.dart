@@ -260,9 +260,9 @@ class MyPageScreen extends StatelessWidget {
                             _SocialLinkIcons(socialLinks: socialLinks),
                           ],
                           const SizedBox(height: 12),
-                          // ── フォロー / フォロワー（横一列コンパクト） ──
-                          if (!isOfficial)
-                            _FollowCounts(userId: viewingUid),
+                          // ── フォロー / フォロワー（横一列コンパクト）──
+                          // 公式アカウントも自分で管理・確認できるよう表示する
+                          _FollowCounts(userId: viewingUid),
                         ],
                       ),
                     ),
