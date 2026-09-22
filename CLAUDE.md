@@ -37,21 +37,24 @@
 - **ビルド番号（`+` 以降）は一度使うと二度と使えない**（TestFlight に上げただけでも消費される）。提出前に必ず現状より大きい番号にする
 
 ### 審査通過時の対応ルール
-- ユーザーが「審査通過」「審査通った」等のメッセージを送ったら、以下を即座に実行すること：
+- 背景: `syncStoreVersions`（Cloud Function・**6時間ごとに自動実行**）が iTunes Lookup API / Google Play ページから
+  latestVersionIos・latestVersionAndroid を自動取得して Firestore `config/app` に書き込んでいる。
+  つまり**放っておいても最終的には自動反映される**。ただし **Apple 側 iTunes API の CDN キャッシュには
+  最大24〜48時間の遅延がある**（Androidの Play 側にはこの遅延はほぼ無い）ため、「審査通過をすぐアプリに反映したい」
+  ときだけ、以下の手動オーバーライドで遅延を回避する。
+- ユーザーが「審査通過」「審査通った」等のメッセージを送ったら、**今回どちらのOSが通ったかを確認した上で**、以下を即座に実行すること：
   1. **バージョン履歴表**（CLAUDE.md 下部）と **リリース状況**（アプリ化 進捗セクション）を「リリース済み」に更新
-  2. **`syncStoreVersionsNow` エンドポイントにバージョン番号を直接指定して Firestore を更新**：
-     ```bash
-     curl -s -m 30 "https://us-central1-sofvo-19d84.cloudfunctions.net/syncStoreVersionsNow?iosVersion=X.Y.Z"
-     ```
-     - `?iosVersion=X.Y.Z` で iTunes API の CDN キャッシュ遅延を回避して直接 Firestore に書き込む
-     - パラメータなしで叩くと iTunes/Play Store から自動取得するが、Apple CDN は反映まで最大24-48時間かかる場合がある
-     - Android も同時に更新する場合: `?iosVersion=X.Y.Z&androidVersion=A.B.C`
-  3. **ユーザーに以下のURLを提示する**（デプロイ後にブラウザで開いてもらう）：
-     ```
-     https://us-central1-sofvo-19d84.cloudfunctions.net/syncStoreVersionsNow?iosVersion=X.Y.Z
-     ```
-     ※ X.Y.Z はリリースしたバージョン番号に置き換える
-  4. コミット＆プッシュ
+  2. **`syncStoreVersionsNow` にバージョン番号を指定して直接 Firestore を更新するURLをユーザーに提示し、ブラウザで開いてもらう**：
+     - **iOS/Android を同じバージョンで同時に提出・リリースした場合は、両方のパラメータを必ず一緒に指定すること**
+       （片方だけ指定すると、指定しなかった側は最大48時間古い表示のままになる。今回まさにこれで一往復手戻りが発生した）：
+       ```
+       https://us-central1-sofvo-19d84.cloudfunctions.net/syncStoreVersionsNow?iosVersion=X.Y.Z&androidVersion=X.Y.Z
+       ```
+     - iOSのみ提出した場合: `?iosVersion=X.Y.Z` のみでよい（Androidは元の値のまま変わらない）
+     - この環境（Claude Code on the web）からは egress プロキシの制限で直接 curl できないため、
+       **URLをユーザーに提示してブラウザで開いてもらう**運用でよい（無理に自分で叩こうとしない）
+     - 返ってきた JSON に `latestVersionIos` / `latestVersionAndroid` の両方が期待通りの値になっているか確認する
+  3. コミット＆プッシュ
 
 ### fastlane メタデータ自動反映（v1.0.9で導入）
 - `ios/fastlane/metadata/ja/` に以下のファイルを配置済み:
@@ -466,11 +469,21 @@ git pull origin main --rebase
 - **Firebase CLI**: `npm install -g firebase-tools --force` でインストール/更新
 - **Node**: v25.6.1 / npm 11.9.0（Mac環境）
 
-### Firebase デプロイ（CI で自動化済み）
-- **`main` ブランチへの push 時に GitHub Actions で全リソースが自動デプロイされる**
-- ワークフロー: `.github/workflows/firebase-deploy.yml`
-- 対象: Functions, Firestore rules/indexes, Storage rules, Hosting（Web ビルド含む）
-- **手動デプロイは不要。コードを `main` に push すれば自動でデプロイされる**
+### Firebase デプロイ（CI で自動化済み・ただし2系統ある）
+- **`claude/**` ブランチへの push** → `.github/workflows/auto-merge.yml` が自動発火し、
+  mainへの自動マージ ＋ **Hosting（Flutter Web）と Functions のみ**を自動デプロイする
+  （変更ファイルの種類で `hosting`/`functions` フラグを判定し、該当する分だけビルド・デプロイする）
+- **`firestore.rules` / `firestore.indexes.json` はこの auto-merge.ymlではデプロイされない**。
+  コメントに「main push (firebase-deploy.yml) でデプロイ」とあるが、auto-merge.yml のマージ push は
+  **GitHub Actions の既定 `GITHUB_TOKEN` で行われるため、他ワークフローの `push` トリガーを起動しない**
+  （無限ループ防止のGitHub側の仕様）。そのため **Firestore rules/indexes の変更を含めたときは、
+  マージ完了後に `firebase-deploy.yml` を `actions_run_trigger`（`run_workflow`, `ref: main`）で
+  手動トリガーすること**（2026-09-22 に実測確認済み。忘れると新しいインデックスが反映されず
+  該当クエリが `FAILED_PRECONDITION` で失敗する）
+- ワークフロー: `.github/workflows/firebase-deploy.yml`（`push: branches: [main]` が一応トリガーだが、
+  上記の理由で人間が直接 `main` に push した場合以外は基本的に自動発火しないと考えて、
+  Firestore rules/indexes を変更したら毎回手動トリガーする運用にすること）
+- 対象（firebase-deploy.yml）: Functions, Firestore rules/indexes, Storage rules, Hosting（Web ビルド含む）
 - シークレット: `FIREBASE_SERVICE_ACCOUNT`（GitHub リポジトリの Secrets に設定済み）
 
 手動デプロイが必要な場合（緊急時のみ）:
