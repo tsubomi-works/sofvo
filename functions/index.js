@@ -4337,6 +4337,49 @@ exports.debugFollowRelation = functions.https.onCall(async (data, context) => {
   };
 });
 
+// ── 一時デバッグ用: 1ユーザーのフォロー中/フォロワー一覧を確認（管理者のみ）──
+// 公式アカウント等、アプリのマイページではフォロー数を非表示にしているユーザーでも
+// 中身を確認できるようにするための管理者用ツール。
+exports.debugFollowList = functions.https.onCall(async (data, context) => {
+  const db = admin.firestore();
+  await assertAdmin(context, db);
+
+  let uid = data && data.uid ? String(data.uid) : "";
+  let userSnap = null;
+  if (!uid && data && data.name) {
+    const norm = normalizeForSearch(String(data.name));
+    const snap = await db.collection("users").where("nicknameNorm", "==", norm).limit(10).get();
+    if (snap.size === 0) {
+      throw new functions.https.HttpsError("not-found", `「${data.name}」に一致するユーザーが見つかりません`);
+    }
+    if (snap.size > 1) {
+      throw new functions.https.HttpsError("failed-precondition",
+        `「${data.name}」に一致するユーザーが複数います: ` +
+          snap.docs.map((d) => `${d.data().nickname || ""}(${d.id})`).join(", "));
+    }
+    uid = snap.docs[0].id;
+    userSnap = snap.docs[0];
+  }
+  if (!uid) throw new functions.https.HttpsError("invalid-argument", "uid または name を指定してください");
+  if (!userSnap) userSnap = await db.collection("users").doc(uid).get();
+
+  const [followingSnap, followersSnap] = await Promise.all([
+    db.collection("users").doc(uid).collection("following").get(),
+    db.collection("users").doc(uid).collection("followers").get(),
+  ]);
+  const toList = (snap) => snap.docs.map((d) => ({ uid: d.id, nickname: (d.data().nickname || "").toString() }));
+
+  return {
+    uid,
+    nickname: userSnap.exists ? (userSnap.data().nickname || null) : null,
+    isOfficial: userSnap.exists && userSnap.data().isOfficial === true,
+    followingCount: followingSnap.size,
+    followersCount: followersSnap.size,
+    following: toList(followingSnap),
+    followers: toList(followersSnap),
+  };
+});
+
 // ── 一時デバッグ用: 特定ユーザーの大会エントリー招待状況を確認（管理者のみ）──
 // 「招待した側が、ちゃんと相手に届いているか知りたい」の確認用。
 // entryDrafts（全大会横断）での招待状況（承認/既読/未読）と、
