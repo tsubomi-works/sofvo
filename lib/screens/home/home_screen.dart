@@ -104,12 +104,27 @@ class _HomeScreenState extends State<HomeScreen>
       }).toList();
       if (pending.isEmpty || !mounted) return;
 
+      // どの大会への招待か分かるよう、大会名・日付も添える
+      final tournamentIds = pending.map((d) => d.reference.parent.parent!.id).toSet().toList();
+      final tournamentDocs = await Future.wait(
+        tournamentIds.map((id) => FirebaseFirestore.instance.collection('tournaments').doc(id).get()),
+      );
+      final tournamentById = {
+        for (var i = 0; i < tournamentIds.length; i++) tournamentIds[i]: tournamentDocs[i],
+      };
+      if (!mounted) return;
+
       final items = pending.map((d) {
         final data = d.data();
+        final tid = d.reference.parent.parent!.id;
+        final tDoc = tournamentById[tid];
+        final tData = (tDoc != null && tDoc.exists) ? tDoc.data()! : <String, dynamic>{};
         return {
-          'tournamentId': d.reference.parent.parent!.id,
+          'tournamentId': tid,
           'teamName': (data['teamName'] ?? '').toString(),
           'leaderName': (data['leaderName'] ?? '').toString(),
+          'tournamentName': (tData['name'] ?? tData['title'] ?? '大会').toString(),
+          'tournamentDate': (tData['date'] ?? '').toString(),
         };
       }).toList();
 
@@ -128,11 +143,15 @@ class _HomeScreenState extends State<HomeScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: items.map((item) {
+                final dateText = (item['tournamentDate'] as String).isNotEmpty
+                    ? '${item['tournamentDate']}・' : '';
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.groups, color: AppTheme.primaryColor),
-                  title: Text('「${item['teamName']}」への招待', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                  subtitle: Text('${item['leaderName']} さんから', style: const TextStyle(fontSize: 12)),
+                  title: Text('$dateText${item['tournamentName']}',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  subtitle: Text('「${item['teamName']}」への招待・${item['leaderName']} さんから',
+                      style: const TextStyle(fontSize: 12)),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
                     Navigator.pop(ctx);
