@@ -3459,9 +3459,13 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
 
     const approvals = Object.assign({}, draft.approvals || {});
     approvals[uid] = approve ? "approved" : "declined";
-    const allApproved = invited.every((u) => approvals[u] === "approved");
+    // 辞退した人は「全員承認」の判定から除外する（辞退者がリストに残り続ける限り
+    // 永遠に成立しない、というのを防ぐため。手動で×取り消しをしなくても、
+    // 残りの有効メンバーだけで4人以上揃えば自動的に成立する）。
+    const activeInvited = invited.filter((u) => approvals[u] !== "declined");
+    const allApproved = activeInvited.length > 0 && activeInvited.every((u) => approvals[u] === "approved");
 
-    if (approve && allApproved && invited.length >= 4) {
+    if (approve && allApproved && activeInvited.length >= 4) {
       // 成立直前の重複再チェック（トランザクション内）。承認が揃うまでの間に
       // 招待メンバーの誰かが別チームで成立していないか、成立済みエントリー全体を
       // 読み直して確認する。2つの下書きがほぼ同時に成立しようとした場合も、
@@ -3471,7 +3475,7 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
       let conflictInfo = null;
       entriesSnap.forEach((d) => {
         const uids = Array.isArray(d.data().memberUids) ? d.data().memberUids : [];
-        for (const u of invited) {
+        for (const u of activeInvited) {
           if (uids.includes(u)) { conflictInfo = d.data().teamName || "別のチーム"; break; }
         }
       });
@@ -3479,20 +3483,26 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
         throw new functions.https.HttpsError("failed-precondition",
           `メンバーの誰かが既に「${conflictInfo}」でエントリー成立済みのため、このチームは成立できません。キャプテンがメンバーを見直してください`);
       }
+      const activeMemberNames = {};
+      const activeMemberAvatars = {};
+      activeInvited.forEach((u) => {
+        activeMemberNames[u] = (draft.memberNames || {})[u] || "名前なし";
+        activeMemberAvatars[u] = (draft.memberAvatars || {})[u] || "";
+      });
       const entryRef = tRef.collection("entries").doc();
       tx.set(entryRef, {
         teamId: entryRef.id,
         teamName: draft.teamName,
         leaderUid: draft.leaderUid,
         leaderName: draft.leaderName,
-        memberUids: invited,
-        memberNames: draft.memberNames || {},
-        memberAvatars: draft.memberAvatars || {},
+        memberUids: activeInvited,
+        memberNames: activeMemberNames,
+        memberAvatars: activeMemberAvatars,
         enteredBy: draft.leaderUid,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       tx.delete(draftRef);
-      return { finalized: true, teamName: draft.teamName, draft };
+      return { finalized: true, teamName: draft.teamName, draft, activeInvited };
     }
     tx.update(draftRef, { approvals });
     return { finalized: false, declined: !approve, teamName: draft.teamName, draft };
@@ -3517,7 +3527,8 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
       });
     } catch (e) { /* noop */ }
   } else if (result.finalized) {
-    const invited = result.draft.invitedUids || [];
+    // 辞退した人には通知・フォロー付与ともに行わない（正式なメンバーではないため）
+    const invited = result.activeInvited || result.draft.invitedUids || [];
     // 参加者全員に主催者フォローを付与（キャプテンは既にフォロー済みなので実質は招待メンバー分）
     await followOrganizerForEntrants(db, tournamentId, invited);
     const tName = ((await tRef.get()).data() || {}).name || "";
@@ -3781,19 +3792,22 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
       return { teamName: draft.teamName, targetName, finalized: false };
     }
 
-    if (remaining.length < 4) {
+    // 辞退した人は「全員承認」の判定・最低人数のカウントから除外する
+    // （×で外さなくても、残りの有効メンバーだけで揃えば自動成立させるため）
+    const activeRemaining = remaining.filter((u) => approvals[u] !== "declined");
+    if (activeRemaining.length < 4) {
       throw new functions.https.HttpsError("failed-precondition",
-        "メンバーが自分を含めて4人未満になるため、このメンバーだけ取り消せません。招待全体を取り消してください");
+        "有効なメンバーが自分を含めて4人未満になるため、このメンバーだけ取り消せません。招待全体を取り消してください");
     }
 
-    const allApproved = remaining.every((u) => approvals[u] === "approved");
+    const allApproved = activeRemaining.every((u) => approvals[u] === "approved");
     if (allApproved) {
-      // 残りメンバーが既に全員承認済みなら、このタイミングで成立させる
+      // 残りの有効メンバーが既に全員承認済みなら、このタイミングで成立させる
       const entriesSnap = await tx.get(tRef.collection("entries"));
       let conflictInfo = null;
       entriesSnap.forEach((d) => {
         const uids = Array.isArray(d.data().memberUids) ? d.data().memberUids : [];
-        for (const u of remaining) {
+        for (const u of activeRemaining) {
           if (uids.includes(u)) { conflictInfo = d.data().teamName || "別のチーム"; break; }
         }
       });
@@ -3801,20 +3815,26 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
         throw new functions.https.HttpsError("failed-precondition",
           `メンバーの誰かが既に「${conflictInfo}」でエントリー成立済みのため成立できません`);
       }
+      const finalMemberNames = {};
+      const finalMemberAvatars = {};
+      activeRemaining.forEach((u) => {
+        finalMemberNames[u] = memberNames[u];
+        finalMemberAvatars[u] = memberAvatars[u];
+      });
       const entryRef = tRef.collection("entries").doc();
       tx.set(entryRef, {
         teamId: entryRef.id,
         teamName: draft.teamName,
         leaderUid: draft.leaderUid,
         leaderName: draft.leaderName,
-        memberUids: remaining,
-        memberNames,
-        memberAvatars,
+        memberUids: activeRemaining,
+        memberNames: finalMemberNames,
+        memberAvatars: finalMemberAvatars,
         enteredBy: draft.leaderUid,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       tx.delete(draftRef);
-      return { teamName: draft.teamName, targetName, finalized: true, invited: remaining };
+      return { teamName: draft.teamName, targetName, finalized: true, invited: activeRemaining };
     }
 
     tx.update(draftRef, { invitedUids: remaining, approvals, memberNames, memberAvatars });

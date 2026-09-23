@@ -4896,6 +4896,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                 final isMemberAdd = data['type'] == 'memberAdd';
                 final invited = List<String>.from((data['invitedUids'] as List<dynamic>?) ?? []);
                 final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+                // 辞退した人は分母から除外する（辞退しても残りの有効メンバーだけで自動成立するため）
+                final activeCount = invited.where((u) => approvals[u] != 'declined').length;
                 final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
                 return GestureDetector(
                   onTap: () => _showPendingDraftDetail(d.id, data),
@@ -4916,7 +4918,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           Text('キャプテン: $leaderName', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
                         ]),
                       ),
-                      Text('承認 $approvedCount/${invited.length}',
+                      Text('承認 $approvedCount/$activeCount',
                           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.accentColor)),
                       const SizedBox(width: 4),
                       Icon(Icons.chevron_right, size: 18, color: AppTheme.textHint),
@@ -6274,6 +6276,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
             final seenAt = Map<String, dynamic>.from(data['seenAt'] as Map? ?? {});
             final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+            // 辞退した人は分母から除外する（辞退しても残りの有効メンバーだけで自動成立するため）
+            final activeCount = invited.where((u) => approvals[u] != 'declined').length;
             final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
             final isLeader = leaderUid == uid;
             final myState = (approvals[uid] ?? 'pending').toString();
@@ -6301,7 +6305,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                       child: Text(isMemberAdd ? '追加メンバーの承認待ち「$teamName」' : '承認待ちエントリー「$teamName」',
                           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
                     ),
-                    Text('承認 $approvedCount/${invited.length}',
+                    Text('承認 $approvedCount/$activeCount',
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
                   ]),
                   const SizedBox(height: 8),
