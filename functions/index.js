@@ -3533,6 +3533,7 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
       try {
         await db.collection("users").doc(u).collection("notifications").add({
           type: "entry_confirmed",
+          senderId: "system", senderName: "システム", senderAvatar: "",
           tournamentId, tournamentName: tName, teamName: result.teamName,
           message: `チーム「${result.teamName}」のエントリーが成立しました`,
           read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3821,7 +3822,9 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
   });
 
   if (result.finalized) {
-    await followOrganizerForEntrants(db, tournamentId, result.invited || []);
+    const finalizedInvited = result.invited || [];
+    await followOrganizerForEntrants(db, tournamentId, finalizedInvited);
+    const tName = ((await tRef.get()).data() || {}).name || "";
     try {
       await tRef.collection("timeline").add({
         authorId: "system", authorName: "システム", authorAvatar: "",
@@ -3830,6 +3833,17 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     } catch (e) { console.error("[removeEntryDraftMember] timeline failed:", e); }
+    await Promise.all(finalizedInvited.map(async (u) => {
+      try {
+        await db.collection("users").doc(u).collection("notifications").add({
+          type: "entry_confirmed",
+          senderId: "system", senderName: "システム", senderAvatar: "",
+          tournamentId, tournamentName: tName, teamName: result.teamName,
+          message: `チーム「${result.teamName}」のエントリーが成立しました`,
+          read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) { console.error("[removeEntryDraftMember] notify failed:", e); }
+    }));
   }
 
   return { removed: true, teamName: result.teamName, targetName: result.targetName, finalized: !!result.finalized };
