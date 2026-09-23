@@ -3732,6 +3732,189 @@ exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   return { canceled: true };
 });
 
+// 承認待ちドラフトから特定のメンバー1人だけを取り消す（キャプテンのみ）。
+// 残りが全員承認済みになった場合はこのタイミングで成立させる
+// （respondEntryInvite 以外の経路で承認が揃うケースのため、同じ成立判定をここでも行う）。
+exports.removeEntryDraftMember = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const uid = context.auth.uid;
+  const tournamentId = data && data.tournamentId ? String(data.tournamentId) : "";
+  const draftId = data && data.draftId ? String(data.draftId) : "";
+  const targetUid = data && data.targetUid ? String(data.targetUid) : "";
+  if (!tournamentId || !draftId || !targetUid) {
+    throw new functions.https.HttpsError("invalid-argument", "パラメータが不足しています");
+  }
+  const db = admin.firestore();
+  const tRef = db.collection("tournaments").doc(tournamentId);
+  const draftRef = tRef.collection("entryDrafts").doc(draftId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(draftRef);
+    if (!snap.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません（取り消された可能性があります）");
+    const draft = snap.data() || {};
+    if (draft.leaderUid !== uid) {
+      throw new functions.https.HttpsError("permission-denied", "取り消せるのはキャプテンのみです");
+    }
+    if (targetUid === uid) {
+      throw new functions.https.HttpsError("invalid-argument", "自分自身は取り消せません。招待全体の取り消しを使ってください");
+    }
+    const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+    if (!invited.includes(targetUid)) {
+      throw new functions.https.HttpsError("not-found", "対象のメンバーは招待に含まれていません");
+    }
+    const remaining = invited.filter((u) => u !== targetUid);
+    const targetName = (draft.memberNames || {})[targetUid] || "メンバー";
+    const approvals = Object.assign({}, draft.approvals || {});
+    const memberNames = Object.assign({}, draft.memberNames || {});
+    const memberAvatars = Object.assign({}, draft.memberAvatars || {});
+    delete approvals[targetUid];
+    delete memberNames[targetUid];
+    delete memberAvatars[targetUid];
+
+    if (draft.type === "memberAdd") {
+      if (remaining.length <= 1) {
+        tx.delete(draftRef);
+        return { teamName: draft.teamName, targetName, finalized: false };
+      }
+      tx.update(draftRef, { invitedUids: remaining, approvals, memberNames, memberAvatars });
+      return { teamName: draft.teamName, targetName, finalized: false };
+    }
+
+    if (remaining.length < 4) {
+      throw new functions.https.HttpsError("failed-precondition",
+        "メンバーが自分を含めて4人未満になるため、このメンバーだけ取り消せません。招待全体を取り消してください");
+    }
+
+    const allApproved = remaining.every((u) => approvals[u] === "approved");
+    if (allApproved) {
+      // 残りメンバーが既に全員承認済みなら、このタイミングで成立させる
+      const entriesSnap = await tx.get(tRef.collection("entries"));
+      let conflictInfo = null;
+      entriesSnap.forEach((d) => {
+        const uids = Array.isArray(d.data().memberUids) ? d.data().memberUids : [];
+        for (const u of remaining) {
+          if (uids.includes(u)) { conflictInfo = d.data().teamName || "別のチーム"; break; }
+        }
+      });
+      if (conflictInfo) {
+        throw new functions.https.HttpsError("failed-precondition",
+          `メンバーの誰かが既に「${conflictInfo}」でエントリー成立済みのため成立できません`);
+      }
+      const entryRef = tRef.collection("entries").doc();
+      tx.set(entryRef, {
+        teamId: entryRef.id,
+        teamName: draft.teamName,
+        leaderUid: draft.leaderUid,
+        leaderName: draft.leaderName,
+        memberUids: remaining,
+        memberNames,
+        memberAvatars,
+        enteredBy: draft.leaderUid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.delete(draftRef);
+      return { teamName: draft.teamName, targetName, finalized: true, invited: remaining };
+    }
+
+    tx.update(draftRef, { invitedUids: remaining, approvals, memberNames, memberAvatars });
+    return { teamName: draft.teamName, targetName, finalized: false };
+  });
+
+  if (result.finalized) {
+    await followOrganizerForEntrants(db, tournamentId, result.invited || []);
+    try {
+      await tRef.collection("timeline").add({
+        authorId: "system", authorName: "システム", authorAvatar: "",
+        text: `${result.teamName}がエントリーしました！`,
+        isOrganizer: false, pinned: false, likesCount: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) { console.error("[removeEntryDraftMember] timeline failed:", e); }
+  }
+
+  return { removed: true, teamName: result.teamName, targetName: result.targetName, finalized: !!result.finalized };
+});
+
+// 承認待ちドラフトに、追加でメンバー1人を招待する（キャプテンのみ）。
+// 既存の承認状態はそのまま維持し、追加した本人だけが新たに pending になる。
+exports.addEntryDraftMember = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const uid = context.auth.uid;
+  const tournamentId = data && data.tournamentId ? String(data.tournamentId) : "";
+  const draftId = data && data.draftId ? String(data.draftId) : "";
+  const targetUid = data && data.targetUid ? String(data.targetUid) : "";
+  if (!tournamentId || !draftId || !targetUid) {
+    throw new functions.https.HttpsError("invalid-argument", "パラメータが不足しています");
+  }
+  if (targetUid === uid) throw new functions.https.HttpsError("invalid-argument", "自分自身は招待できません");
+
+  const db = admin.firestore();
+  const tRef = db.collection("tournaments").doc(tournamentId);
+  const draftRef = tRef.collection("entryDrafts").doc(draftId);
+
+  const draftSnap = await draftRef.get();
+  if (!draftSnap.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません（取り消された可能性があります）");
+  const draft = draftSnap.data() || {};
+  if (draft.leaderUid !== uid) {
+    throw new functions.https.HttpsError("permission-denied", "追加できるのはキャプテンのみです");
+  }
+  const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+  if (invited.includes(targetUid)) {
+    throw new functions.https.HttpsError("failed-precondition", "既に招待に含まれています");
+  }
+
+  // 重複チェック：他の成立エントリー or 承認待ちドラフト（辞退済みを除く）に既に含まれていないか
+  const [entriesSnap, draftsSnap] = await Promise.all([
+    tRef.collection("entries").get(),
+    tRef.collection("entryDrafts").get(),
+  ]);
+  let takenTeam = null;
+  entriesSnap.forEach((d) => {
+    const uids = Array.isArray(d.data().memberUids) ? d.data().memberUids : [];
+    if (uids.includes(targetUid)) takenTeam = d.data().teamName || "既存のチーム";
+  });
+  draftsSnap.forEach((d) => {
+    const dd = d.data() || {};
+    const inv = Array.isArray(dd.invitedUids) ? dd.invitedUids : [];
+    if (inv.includes(targetUid) && (!dd.approvals || dd.approvals[targetUid] !== "declined")) {
+      takenTeam = dd.teamName || "招待中のチーム";
+    }
+  });
+  if (takenTeam) {
+    throw new functions.https.HttpsError("failed-precondition", `選択したメンバーは既に「${takenTeam}」に含まれています`);
+  }
+
+  const targetSnap = await db.collection("users").doc(targetUid).get();
+  const targetName = (targetSnap.exists && targetSnap.data().nickname) || "名前なし";
+  const targetAvatar = (targetSnap.exists && targetSnap.data().avatarUrl) || "";
+
+  await draftRef.update({
+    invitedUids: admin.firestore.FieldValue.arrayUnion(targetUid),
+    [`approvals.${targetUid}`]: "pending",
+    [`memberNames.${targetUid}`]: targetName,
+    [`memberAvatars.${targetUid}`]: targetAvatar,
+  });
+
+  const tName = ((await tRef.get()).data() || {}).name || "";
+  try {
+    await db.collection("users").doc(targetUid).collection("notifications").add({
+      type: "entry_invite",
+      tournamentId,
+      tournamentName: tName,
+      draftId,
+      teamName: draft.teamName,
+      senderId: uid,
+      senderName: draft.leaderName || "",
+      senderAvatar: (draft.memberAvatars || {})[uid] || "",
+      message: `が大会「${tName}」のチーム「${draft.teamName}」に招待しました`,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) { console.error("[addEntryDraftMember] notify failed:", e); }
+
+  return { added: true, name: targetName };
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ポイント付与（サーバーサイド）
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

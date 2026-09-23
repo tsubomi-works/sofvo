@@ -6191,18 +6191,34 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                         child: Row(children: [
                           Expanded(child: Text(nm, style: const TextStyle(fontSize: 13))),
                           Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+                          InkWell(
+                            onTap: () => _removeEntryDraftMember(d.id, u, nm),
+                            borderRadius: BorderRadius.circular(12),
+                            child: const Padding(
+                              padding: EdgeInsets.only(left: 6, top: 2, bottom: 2, right: 2),
+                              child: Icon(Icons.close, size: 16, color: AppTheme.textHint),
+                            ),
+                          ),
                         ]),
                       );
                     }),
                     const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: () => _cancelEntryDraft(d.id),
-                        icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
-                        label: const Text('招待を取り消す', style: TextStyle(fontSize: 13, color: AppTheme.error, fontWeight: FontWeight.bold)),
-                        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => _showAddEntryDraftMemberSheet(d.id, teamName),
+                          icon: const Icon(Icons.person_add_alt, size: 16, color: AppTheme.primaryColor),
+                          label: const Text('追加招待', style: TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _cancelEntryDraft(d.id),
+                          icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
+                          label: const Text('招待を取り消す', style: TextStyle(fontSize: 13, color: AppTheme.error, fontWeight: FontWeight.bold)),
+                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
+                        ),
+                      ],
                     ),
                   ] else if (myState == 'pending') ...[
                     // 招待メンバー視点：承認 / 辞退
@@ -6274,6 +6290,123 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('取り消しに失敗しました'), backgroundColor: AppTheme.error));
     }
+  }
+
+  Future<void> _removeEntryDraftMember(String draftId, String targetUid, String targetName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('招待を取り消しますか？'),
+        content: Text('$targetName さんへの招待だけを取り消します。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('キャンセル')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('取り消す', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('removeEntryDraftMember');
+      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      final finalized = (res.data as Map)['finalized'] == true;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(finalized
+            ? '$targetName さんを外し、残りメンバーでエントリーが成立しました！'
+            : '$targetName さんへの招待を取り消しました'),
+        backgroundColor: AppTheme.success,
+      ));
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? '取り消しに失敗しました'), backgroundColor: AppTheme.error));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('取り消しに失敗しました'), backgroundColor: AppTheme.error));
+    }
+  }
+
+  void _showAddEntryDraftMemberSheet(String draftId, String teamName) {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+    final selectedMembers = <String, String>{};
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          return Scaffold(
+            backgroundColor: AppTheme.backgroundColor,
+            appBar: AppBar(
+              title: const Text('メンバーを追加招待', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              centerTitle: true,
+            ),
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('「$teamName」に追加で招待するメンバーを選択', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  FollowerMemberPicker(
+                    uid: uid,
+                    selectedMembers: selectedMembers,
+                    tournamentId: _tournamentId,
+                    onToggle: (fUid, fName) {
+                      setSheetState(() {
+                        if (selectedMembers.containsKey(fUid)) {
+                          selectedMembers.remove(fUid);
+                        } else {
+                          selectedMembers[fUid] = fName;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: selectedMembers.isEmpty
+                          ? null
+                          : () async {
+                              final targets = Map<String, String>.from(selectedMembers);
+                              final callable = FirebaseFunctions.instance.httpsCallable('addEntryDraftMember');
+                              var okCount = 0;
+                              String? lastError;
+                              for (final entry in targets.entries) {
+                                try {
+                                  await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': entry.key});
+                                  okCount++;
+                                } on FirebaseFunctionsException catch (e) {
+                                  lastError = e.message;
+                                } catch (_) {
+                                  lastError = '追加に失敗しました';
+                                }
+                              }
+                              if (!ctx.mounted) return;
+                              Navigator.pop(ctx);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                  content: Text(okCount > 0
+                                      ? '$okCount 人に追加招待を送信しました${lastError != null ? '（一部失敗: $lastError）' : ''}'
+                                      : (lastError ?? '追加に失敗しました')),
+                                  backgroundColor: okCount > 0 ? AppTheme.success : AppTheme.error,
+                                ));
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('招待を送る', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ));
   }
 
   Future<void> _confirmNewEntry(BuildContext sheetContext, String teamName, Map<String, String> members) async {
