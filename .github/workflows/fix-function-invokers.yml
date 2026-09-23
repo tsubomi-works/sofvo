@@ -39,6 +39,8 @@ jobs:
             recomputeTournamentPointsV2
             requestNotificationEmailVerification
             verifyNotificationEmail
+            removeEntryDraftMember
+            addEntryDraftMember
           "
           failed=0
           for f in $FUNCS; do
