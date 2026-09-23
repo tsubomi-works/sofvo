@@ -6379,6 +6379,18 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                   ] else ...[
                     Text(myState == 'approved' ? '承認済み・他のメンバーの承認を待っています' : '辞退済み',
                         style: TextStyle(fontSize: 13, color: myState == 'approved' ? AppTheme.success : AppTheme.error, fontWeight: FontWeight.w600)),
+                    if (myState == 'declined') ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: () => _respondEntryInvite(d.id, true),
+                          style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 30)),
+                          child: const Text('間違えて辞退した場合はこちら（参加する）',
+                              style: TextStyle(fontSize: 12, color: AppTheme.primaryColor, fontWeight: FontWeight.bold, decoration: TextDecoration.underline)),
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               ),
