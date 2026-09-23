@@ -6,6 +6,7 @@ import '../../config/app_theme.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
 import '../profile/user_profile_screen.dart';
+import '../team/team_management_screen.dart';
 
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -129,6 +130,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
         context,
         MaterialPageRoute(
           builder: (_) => UserProfileScreen(userId: senderId),
+        ),
+      );
+      return;
+    }
+
+    // チーム参加リクエスト → チーム管理画面へ（承認/却下はそこで行う）
+    if (type == 'team_join_request') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const TeamManagementScreen(),
         ),
       );
       return;

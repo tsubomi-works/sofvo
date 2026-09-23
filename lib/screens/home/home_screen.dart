@@ -19,11 +19,27 @@ import '../../widgets/post_media_carousel.dart';
 import '../../widgets/likes_list_sheet.dart';
 import '../tournament/tournament_detail_screen.dart';
 import '../tournament/post_event_action_screen.dart';
+import '../team/team_management_screen.dart';
 import '../follow/follow_search_screen.dart';
 import '../../widgets/sponsor_banner.dart';
 import '../../widgets/active_tournament_banner.dart';
 import 'create_post_screen.dart';
 import 'comment_screen.dart';
+
+// アプリ起動時ポップアップ（見逃し防止）1件分。大会エントリー招待・
+// チーム参加リクエストなど、種類が違ってもまとめて1つの一覧で出すための共通形。
+class _PendingActionItem {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final void Function(BuildContext dialogContext) onTap;
+  _PendingActionItem({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -81,54 +97,25 @@ class _HomeScreenState extends State<HomeScreen>
     // アプリ起動時にバッジを正確な未読数に同期
     PushNotificationService.updateBadgeCount();
     // アプリ起動時、未対応（未承認）の大会エントリー招待があればポップアップで知らせる
-    _checkPendingEntryInvites();
+    _checkPendingActionItems();
   }
 
   // 通知ベルを開かないと気づけない問題への対策。
-  // notifications の read フラグではなく、entryDrafts の実際の承認状態
-  // （approvals[uid] == 'pending'）を見るので、一度ベルを開いただけでは消えない。
-  Future<void> _checkPendingEntryInvites() async {
+  // notifications の read フラグではなく、entryDrafts/joinRequests の実際の
+  // 承認待ち状態を直接見るので、一度ベルを開いただけでは消えない。
+  // 大会エントリー招待（招待された本人が対応）とチーム参加リクエスト
+  // （チームオーナーが対応）をまとめて1つのポップアップで案内する。
+  Future<void> _checkPendingActionItems() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     try {
-      final snap = await FirebaseFirestore.instance
-          .collectionGroup('entryDrafts')
-          .where('invitedUids', arrayContains: uid)
-          .get();
-      final pending = snap.docs.where((d) {
-        final data = d.data();
-        final leaderUid = (data['leaderUid'] ?? '').toString();
-        final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
-        final myState = (approvals[uid] ?? 'pending').toString();
-        return leaderUid != uid && myState == 'pending';
-      }).toList();
-      if (pending.isEmpty || !mounted) return;
+      final results = await Future.wait([
+        _fetchPendingEntryInviteItems(uid),
+        _fetchPendingTeamJoinRequestItems(uid),
+      ]);
+      final items = [...results[0], ...results[1]];
+      if (items.isEmpty || !mounted) return;
 
-      // どの大会への招待か分かるよう、大会名・日付も添える
-      final tournamentIds = pending.map((d) => d.reference.parent.parent!.id).toSet().toList();
-      final tournamentDocs = await Future.wait(
-        tournamentIds.map((id) => FirebaseFirestore.instance.collection('tournaments').doc(id).get()),
-      );
-      final tournamentById = {
-        for (var i = 0; i < tournamentIds.length; i++) tournamentIds[i]: tournamentDocs[i],
-      };
-      if (!mounted) return;
-
-      final items = pending.map((d) {
-        final data = d.data();
-        final tid = d.reference.parent.parent!.id;
-        final tDoc = tournamentById[tid];
-        final tData = (tDoc != null && tDoc.exists) ? tDoc.data()! : <String, dynamic>{};
-        return {
-          'tournamentId': tid,
-          'teamName': (data['teamName'] ?? '').toString(),
-          'leaderName': (data['leaderName'] ?? '').toString(),
-          'tournamentName': (tData['name'] ?? tData['title'] ?? '大会').toString(),
-          'tournamentDate': (tData['date'] ?? '').toString(),
-        };
-      }).toList();
-
-      if (!mounted) return;
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -136,34 +123,20 @@ class _HomeScreenState extends State<HomeScreen>
           title: const Row(children: [
             Icon(Icons.how_to_reg, color: AppTheme.primaryColor),
             SizedBox(width: 8),
-            Expanded(child: Text('対応が必要な招待があります', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+            Expanded(child: Text('対応が必要な項目があります', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
           ]),
           content: SizedBox(
             width: double.maxFinite,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: items.map((item) {
-                final dateText = (item['tournamentDate'] as String).isNotEmpty
-                    ? '${item['tournamentDate']}・' : '';
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.groups, color: AppTheme.primaryColor),
-                  title: Text('$dateText${item['tournamentName']}',
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                  subtitle: Text('「${item['teamName']}」への招待・${item['leaderName']} さんから',
-                      style: const TextStyle(fontSize: 12)),
+                  leading: Icon(item.icon, color: AppTheme.primaryColor),
+                  title: Text(item.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  subtitle: Text(item.subtitle, style: const TextStyle(fontSize: 12)),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    final doc = await FirebaseFirestore.instance
-                        .collection('tournaments').doc(item['tournamentId'] as String).get();
-                    if (!doc.exists || !mounted) return;
-                    final tData = doc.data()!;
-                    tData['id'] = doc.id;
-                    Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => TournamentDetailScreen(tournament: tData),
-                    ));
-                  },
+                  onTap: () => item.onTap(ctx),
                 );
               }).toList(),
             ),
@@ -174,8 +147,95 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     } catch (e) {
-      debugPrint('承認待ちエントリー招待の確認に失敗: $e');
+      debugPrint('対応が必要な項目の確認に失敗: $e');
     }
+  }
+
+  // ── 大会エントリー招待（招待された本人が承認/辞退する）──
+  Future<List<_PendingActionItem>> _fetchPendingEntryInviteItems(String uid) async {
+    final snap = await FirebaseFirestore.instance
+        .collectionGroup('entryDrafts')
+        .where('invitedUids', arrayContains: uid)
+        .get();
+    final pending = snap.docs.where((d) {
+      final data = d.data();
+      final leaderUid = (data['leaderUid'] ?? '').toString();
+      final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+      final myState = (approvals[uid] ?? 'pending').toString();
+      return leaderUid != uid && myState == 'pending';
+    }).toList();
+    if (pending.isEmpty) return [];
+
+    // どの大会への招待か分かるよう、大会名・日付も添える
+    final tournamentIds = pending.map((d) => d.reference.parent.parent!.id).toSet().toList();
+    final tournamentDocs = await Future.wait(
+      tournamentIds.map((id) => FirebaseFirestore.instance.collection('tournaments').doc(id).get()),
+    );
+    final tournamentById = {
+      for (var i = 0; i < tournamentIds.length; i++) tournamentIds[i]: tournamentDocs[i],
+    };
+
+    return pending.map((d) {
+      final data = d.data();
+      final tid = d.reference.parent.parent!.id;
+      final tDoc = tournamentById[tid];
+      final tData = (tDoc != null && tDoc.exists) ? tDoc.data()! : <String, dynamic>{};
+      final teamName = (data['teamName'] ?? '').toString();
+      final leaderName = (data['leaderName'] ?? '').toString();
+      final tournamentName = (tData['name'] ?? tData['title'] ?? '大会').toString();
+      final tournamentDate = (tData['date'] ?? '').toString();
+      final dateText = tournamentDate.isNotEmpty ? '$tournamentDate・' : '';
+      return _PendingActionItem(
+        icon: Icons.groups,
+        title: '$dateText$tournamentName',
+        subtitle: '「$teamName」への招待・$leaderName さんから',
+        onTap: (ctx) async {
+          Navigator.pop(ctx);
+          final doc = await FirebaseFirestore.instance.collection('tournaments').doc(tid).get();
+          if (!doc.exists || !mounted) return;
+          final fullTData = doc.data()!;
+          fullTData['id'] = doc.id;
+          Navigator.push(context, MaterialPageRoute(
+            builder: (_) => TournamentDetailScreen(tournament: fullTData),
+          ));
+        },
+      );
+    }).toList();
+  }
+
+  // ── チーム参加リクエスト（チームオーナーが承認/却下する）──
+  Future<List<_PendingActionItem>> _fetchPendingTeamJoinRequestItems(String uid) async {
+    final teamsSnap = await FirebaseFirestore.instance
+        .collection('teams')
+        .where('ownerId', isEqualTo: uid)
+        .get();
+    if (teamsSnap.docs.isEmpty) return [];
+
+    final reqSnaps = await Future.wait(
+      teamsSnap.docs.map((t) => t.reference.collection('joinRequests').get()),
+    );
+
+    final items = <_PendingActionItem>[];
+    for (var i = 0; i < teamsSnap.docs.length; i++) {
+      final teamData = teamsSnap.docs[i].data();
+      final teamName = (teamData['name'] ?? teamData['teamName'] ?? 'チーム').toString();
+      for (final req in reqSnaps[i].docs) {
+        final r = req.data();
+        final applicantName = (r['name'] ?? '名前なし').toString();
+        items.add(_PendingActionItem(
+          icon: Icons.group_add,
+          title: '「$teamName」への参加リクエスト',
+          subtitle: '$applicantName さんから',
+          onTap: (ctx) {
+            Navigator.pop(ctx);
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const TeamManagementScreen(),
+            ));
+          },
+        ));
+      }
+    }
+    return items;
   }
 
   @override
