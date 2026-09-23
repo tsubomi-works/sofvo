@@ -4868,8 +4868,135 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     );
   }
 
+  // 主催者・編集者向け：承認待ちドラフト（仮エントリー）の一覧。
+  // entryDrafts は招待対象者以外には表示されないため、主催者からは
+  // どのチームが承認待ちで止まっているかが全く見えなかった。
+  Widget _buildOrganizerPendingDraftsSection() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _firestore.collection('tournaments').doc(_tournamentId).collection('entryDrafts').snapshots(),
+      builder: (context, snap) {
+        final docs = snap.data?.docs ?? [];
+        if (docs.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
+                const SizedBox(width: 6),
+                Text('承認待ち ${docs.length}チーム（主催者のみ表示）',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.accentColor)),
+              ]),
+              const SizedBox(height: 8),
+              ...docs.map((d) {
+                final data = d.data() as Map<String, dynamic>;
+                final teamName = (data['teamName'] ?? '').toString();
+                final leaderName = (data['leaderName'] ?? '').toString();
+                final isMemberAdd = data['type'] == 'memberAdd';
+                final invited = List<String>.from((data['invitedUids'] as List<dynamic>?) ?? []);
+                final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+                final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
+                return GestureDetector(
+                  onTap: () => _showPendingDraftDetail(d.id, data),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.accentColor.withValues(alpha: 0.2)),
+                    ),
+                    child: Row(children: [
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(isMemberAdd ? '$teamName（追加メンバー）' : teamName,
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 2),
+                          Text('キャプテン: $leaderName', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                        ]),
+                      ),
+                      Text('承認 $approvedCount/${invited.length}',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.accentColor)),
+                      const SizedBox(width: 4),
+                      Icon(Icons.chevron_right, size: 18, color: AppTheme.textHint),
+                    ]),
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showPendingDraftDetail(String draftId, Map<String, dynamic> data) {
+    final teamName = (data['teamName'] ?? '').toString();
+    final leaderName = (data['leaderName'] ?? '').toString();
+    final isMemberAdd = data['type'] == 'memberAdd';
+    final invited = List<String>.from((data['invitedUids'] as List<dynamic>?) ?? []);
+    final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
+    final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 16),
+            Text(isMemberAdd ? '$teamName（追加メンバー承認待ち）' : teamName,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text('キャプテン: $leaderName', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            const SizedBox(height: 16),
+            ...invited.map((u) {
+              final nm = (memberNames[u] ?? '?').toString();
+              final st = (approvals[u] ?? 'pending').toString();
+              final label = st == 'approved' ? '承認済み' : st == 'declined' ? '辞退' : '承認待ち';
+              final c = st == 'approved'
+                  ? AppTheme.success
+                  : st == 'declined'
+                      ? AppTheme.error
+                      : AppTheme.textHint;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(children: [
+                  Expanded(child: Text(nm, style: const TextStyle(fontSize: 14))),
+                  Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+                ]),
+              );
+            }),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _cancelEntryDraft(draftId);
+                },
+                icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
+                label: const Text('招待を取り消す', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppTheme.error), padding: const EdgeInsets.symmetric(vertical: 12)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTeamsTab() {
     if (_tournamentId.isEmpty) return const Center(child: Text('大会IDが見つかりません'));
+    final canManage = _canManageTournament(widget.tournament);
 
     return StreamBuilder<QuerySnapshot>(
       stream: _firestore.collection('tournaments').doc(_tournamentId).collection('entries').snapshots(),
@@ -4878,12 +5005,19 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         final entries = entriesSnap.data?.docs ?? [];
 
         if (entries.isEmpty) {
-          return Center(
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(Icons.groups_outlined, size: 64, color: AppTheme.textHint),
-              const SizedBox(height: 16),
-              const Text('まだエントリーはありません', style: TextStyle(fontSize: 15, color: AppTheme.textSecondary)),
-            ]),
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (canManage) _buildOrganizerPendingDraftsSection(),
+              Padding(
+                padding: const EdgeInsets.only(top: 60),
+                child: Column(children: [
+                  Icon(Icons.groups_outlined, size: 64, color: AppTheme.textHint),
+                  const SizedBox(height: 16),
+                  const Text('まだエントリーはありません', style: TextStyle(fontSize: 15, color: AppTheme.textSecondary)),
+                ]),
+              ),
+            ],
           );
         }
 
@@ -4914,6 +5048,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (canManage) _buildOrganizerPendingDraftsSection(),
                 // ヘッダー: エントリー数 + 受付状況
                 Row(children: [
                   Text('エントリー済み ${entries.length}チーム',
