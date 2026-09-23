@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
+import '../utils/search_normalize.dart';
 
 /// エントリー画面用のメンバー選択リスト（フォロー中から選ぶ）。
 /// - 名前検索ボックス付き（フォロー中が多くても探せる）
@@ -134,7 +135,7 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
         // ── 名前検索 ──
         TextField(
           controller: _searchController,
-          onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+          onChanged: (v) => setState(() => _query = normalizeForSearch(v.trim())),
           decoration: InputDecoration(
             hintText: '名前で検索',
             hintStyle: const TextStyle(fontSize: 13),
@@ -205,7 +206,7 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                   final data = doc.data() as Map<String, dynamic>? ?? {};
                   final name = (data['nickname'] ?? '名前なし').toString();
                   if (_query.isNotEmpty &&
-                      !name.toLowerCase().contains(_query)) {
+                      !normalizeForSearch(name).contains(_query)) {
                     continue;
                   }
                   items.add(_PickerItem(
