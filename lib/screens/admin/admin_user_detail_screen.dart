@@ -4,6 +4,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../config/app_theme.dart';
+import '../../services/follow_service.dart';
 import '../../widgets/official_badge.dart';
 import '../chat/chat_screen.dart';
 import '../profile/my_page_screen.dart';
@@ -23,6 +24,37 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
   String get _currentUid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   bool _loadingAction = false;
+
+  @override
+  void initState() {
+    super.initState();
+    FollowService.instance.addListener(_onFollowChanged);
+  }
+
+  @override
+  void dispose() {
+    FollowService.instance.removeListener(_onFollowChanged);
+    super.dispose();
+  }
+
+  void _onFollowChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleFollow(String nickname) async {
+    setState(() => _loadingAction = true);
+    try {
+      final myDoc = await _firestore.collection('users').doc(_currentUid).get();
+      final myNickname = (myDoc.data()?['nickname'] as String?) ?? '管理者';
+      await FollowService.instance.toggleFollow(
+        targetUid: widget.userId,
+        targetNickname: nickname,
+        myNickname: myNickname,
+      );
+    } finally {
+      if (mounted) setState(() => _loadingAction = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -321,6 +353,21 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
               ),
             ),
           ),
+          if (widget.userId != _currentUid) ...[
+            const Divider(height: 1),
+            _buildActionTile(
+              icon: FollowService.instance.isFollowing(widget.userId)
+                  ? Icons.person_remove_rounded
+                  : Icons.person_add_alt_1_rounded,
+              label: FollowService.instance.isFollowing(widget.userId)
+                  ? 'フォロー中（タップで解除）'
+                  : 'フォローする',
+              color: FollowService.instance.isFollowing(widget.userId)
+                  ? AppTheme.textSecondary
+                  : AppTheme.primaryColor,
+              onTap: () => _toggleFollow(nickname),
+            ),
+          ],
           const Divider(height: 1),
           _buildActionTile(
             icon: isBanned ? Icons.lock_open_rounded : Icons.block_rounded,
