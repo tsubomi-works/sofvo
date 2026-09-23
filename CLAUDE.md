@@ -655,12 +655,12 @@ firebase functions:shell
 
 ## TODO: 将来の改善タスク
 
-- [ ] **通知用メールアドレス機能**: Apple/Google Sign Inユーザーは認証メールが変更できないため、通知送信先を別途設定できるようにする
-  - 設定画面のアカウントセクションに「通知用メールアドレス」を追加
-  - 確認メール認証フロー（Cloud Functionsでトークン生成・検証）
-  - Firestore `users/{uid}` に `notificationEmail` フィールドを保存
-  - Cloud Functionsのメール送信時に `notificationEmail` → 認証メールの順でフォールバック
-  - 設定画面に認証状態を表示（「認証済み ✓」/「認証待ち…」）
+- [x] **通知用メールアドレス機能**（2026/09/23 実装）: Apple/Google Sign Inユーザーは認証メールが変更できないため、通知送信先を別途設定できるようにした
+  - 設定画面「アカウント」に「通知用メールアドレス」を追加（`settings_screen.dart`）。ステータス表示は「認証済み: xxx」「認証待ち: xxx（メール内のリンクを確認してください）」「未設定」の3状態
+  - 確認メール認証フロー: `requestNotificationEmailVerification`（onCall・本人がメール入力→確認メール送信）と`verifyNotificationEmail`（onRequest・メール内リンクから叩かれる、ログイン不要、24時間で失効）
+  - 保存先は `users/{uid}` 本体ではなく **`users/{uid}/private/info`**（本人のみ読み書き可）。メールアドレスは個人情報のため、誰でも読める本体ドキュメントには置かない
+  - `sendWelcomeEmail` / `sendWelcomeEmailOnUpdate` / `sendAccountDeletedEmail` は共通ヘルパー `resolveNotificationEmail(uid)` で `private/info` の認証済み通知用メールを優先し、無ければ認証メールにフォールバック
+  - 新規追加した2関数はアプリ/メールリンクから呼ばれるため `fix-function-invokers.yml` の対象リストに追加済み
 - [ ] **大会検索・フィルター機能の強化**: 大会数が増えたら、オンボーディング画面（「大会をさがす」）の検索・絞り込みUIを改善する（地域・日程・レベル等）
 - [x] **試合・セットの時間データ記録（進捗データ収集）**: 「1セット/1試合がどのくらいで終わったか」を記録する。後から欲しくなっても過去分は取り戻せないため、収集だけ先行で開始（2026/06/14 実装）。
   - **実装済みの記録フィールド**（すべて `FieldValue.serverTimestamp()` ＝ サーバー時刻）:

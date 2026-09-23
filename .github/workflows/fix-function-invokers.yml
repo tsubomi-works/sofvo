@@ -37,6 +37,8 @@ jobs:
             getPublicProfile
             recomputeTournamentPointsNow
             recomputeTournamentPointsV2
+            requestNotificationEmailVerification
+            verifyNotificationEmail
           "
           failed=0
           for f in $FUNCS; do

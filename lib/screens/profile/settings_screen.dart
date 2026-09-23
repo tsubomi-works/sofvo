@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../config/app_theme.dart';
@@ -35,6 +36,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isAdmin = false;
   bool _osNotificationDenied = false;
   String _appVersion = '';
+  String? _notificationEmail;
+  bool _notificationEmailVerified = false;
+  String? _pendingNotificationEmail;
 
   @override
   void initState() {
@@ -68,18 +72,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .get();
+    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final results = await Future.wait([
+      userRef.get(),
+      userRef.collection('private').doc('info').get(),
+    ]);
+    final doc = results[0];
+    final privateDoc = results[1];
     if (doc.exists) {
       final data = doc.data();
+      final privateData = privateDoc.data();
       final settings =
           data?['notificationSettings'] as Map<String, dynamic>?;
       if (mounted) {
         setState(() {
           _searchId = (data?['searchId'] as String?) ?? '';
           _isAdmin = data?['isAdmin'] == true;
+          _notificationEmail = privateData?['notificationEmail'] as String?;
+          _notificationEmailVerified = privateData?['notificationEmailVerified'] == true;
+          _pendingNotificationEmail = privateData?['pendingNotificationEmail'] as String?;
           if (settings != null) {
             _pushNotification = settings['push'] ?? true;
             _emailNotification = settings['email'] ?? false;
@@ -154,6 +165,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Icons.email_outlined,
                   'メールアドレス',
                   user?.email ?? '未設定',
+                ),
+                _buildDivider(),
+                ListTile(
+                  leading: Icon(Icons.mark_email_read_outlined,
+                      color: AppTheme.primaryColor, size: 22),
+                  title: const Text('通知用メールアドレス',
+                      style: TextStyle(fontSize: 15)),
+                  subtitle: Text(
+                    _notificationEmailVerified && _notificationEmail != null
+                        ? '認証済み: $_notificationEmail'
+                        : _pendingNotificationEmail != null
+                            ? '認証待ち: $_pendingNotificationEmail（メール内のリンクを確認してください）'
+                            : '未設定（通常のメールアドレスに送信されます）',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _notificationEmailVerified
+                          ? AppTheme.success
+                          : _pendingNotificationEmail != null
+                              ? AppTheme.warning
+                              : AppTheme.textSecondary,
+                    ),
+                  ),
+                  trailing: Icon(Icons.chevron_right,
+                      color: Colors.grey[400], size: 22),
+                  onTap: () => _showNotificationEmailDialog(),
                 ),
                 _buildDivider(),
                 _buildCopyableTile(
@@ -635,6 +671,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (_) => ChatScreen(chatId: chatId!, chatTitle: '【公式】Sofvo', chatType: 'dm', otherUserId: officialUid),
       ));
     }
+  }
+
+  void _showNotificationEmailDialog() {
+    final emailCtrl = TextEditingController(text: _pendingNotificationEmail ?? '');
+    bool sending = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setDialogState) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('通知用メールアドレス', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Apple/Googleサインインなどでログイン用メールアドレスを変更できない場合に、'
+                'ウェルカムメール等の通知だけ別のアドレスに届けたいときに使います。'
+                '入力すると確認メールが届くので、メール内のリンクを開くと設定が反映されます。',
+                style: TextStyle(fontSize: 12.5, color: AppTheme.textSecondary, height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: InputDecoration(
+                  hintText: 'example@example.com',
+                  filled: true,
+                  fillColor: AppTheme.backgroundColor,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('キャンセル')),
+            ElevatedButton(
+              onPressed: sending
+                  ? null
+                  : () async {
+                      final email = emailCtrl.text.trim();
+                      if (email.isEmpty || !email.contains('@')) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text('正しいメールアドレスを入力してください'), backgroundColor: AppTheme.warning));
+                        return;
+                      }
+                      setDialogState(() => sending = true);
+                      try {
+                        await FirebaseFunctions.instance
+                            .httpsCallable('requestNotificationEmailVerification')
+                            .call({'email': email});
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        if (mounted) {
+                          setState(() => _pendingNotificationEmail = email);
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text('$email 宛に確認メールを送信しました'), backgroundColor: AppTheme.success));
+                        }
+                      } on FirebaseFunctionsException catch (e) {
+                        setDialogState(() => sending = false);
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                              content: Text(e.message ?? '送信に失敗しました'), backgroundColor: AppTheme.error));
+                        }
+                      } catch (_) {
+                        setDialogState(() => sending = false);
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(content: Text('送信に失敗しました'), backgroundColor: AppTheme.error));
+                        }
+                      }
+                    },
+              child: sending
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('確認メールを送る'),
+            ),
+          ],
+        );
+      }),
+    );
   }
 
   void _showChangePasswordDialog() {

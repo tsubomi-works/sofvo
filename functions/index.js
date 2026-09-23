@@ -2095,7 +2095,10 @@ exports.sendWelcomeEmail = functions.firestore
     let email;
     try {
       const userRecord = await admin.auth().getUser(uid);
-      email = userRecord.email;
+      // Apple/Googleサインインは認証メールを変更できないため、本人が確認済みの
+      // 通知用メールアドレス（users/{uid}/private/info）があればそちらを優先する
+      // （無ければ認証メールにフォールバック）
+      email = (await resolveNotificationEmail(uid)) || userRecord.email;
     } catch (e) {
       console.error("[WelcomeEmail] Failed to get user:", e.message);
       return null;
@@ -2133,7 +2136,7 @@ exports.sendWelcomeEmailOnUpdate = functions.firestore
     let email;
     try {
       const userRecord = await admin.auth().getUser(uid);
-      email = userRecord.email;
+      email = (await resolveNotificationEmail(uid)) || userRecord.email;
     } catch (e) {
       console.error("[WelcomeEmail] Failed to get user:", e.message);
       return null;
@@ -2152,6 +2155,21 @@ exports.sendWelcomeEmailOnUpdate = functions.firestore
     }
     return null;
   });
+
+// 本人が確認済みの通知用メールアドレス（users/{uid}/private/info）があれば返す。
+// 無ければ null（呼び出し側で認証メールにフォールバックする）。
+async function resolveNotificationEmail(uid) {
+  try {
+    const snap = await admin.firestore()
+      .collection("users").doc(uid).collection("private").doc("info").get();
+    if (!snap.exists) return null;
+    const d = snap.data() || {};
+    return (d.notificationEmailVerified && d.notificationEmail) || null;
+  } catch (e) {
+    console.error("[resolveNotificationEmail] failed:", e.message);
+    return null;
+  }
+}
 
 // ── ウェルカムメール送信の共通関数 ──
 async function sendWelcomeMailTo(email, nickname) {
@@ -2231,7 +2249,8 @@ exports.sendAccountDeletedEmail = functions.firestore
     let email;
     try {
       const authUser = await admin.auth().getUser(uid);
-      email = authUser.email;
+      // private/info はユーザードキュメント削除前にまだ存在するので取得できる
+      email = (await resolveNotificationEmail(uid)) || authUser.email;
     } catch (e) {
       // Auth userが既に削除済み or 存在しない場合はスキップ
       console.log(`[DeleteEmail] Auth user not found for ${uid}, skipping`);
@@ -2300,6 +2319,137 @@ async function sendAccountDeletedMailTo(email, nickname) {
       <p style="color:#B0B0B0;font-size:12px;line-height:1.6;margin:24px 0 0;border-top:1px solid #eee;padding-top:16px">
         このメールに心当たりがない場合は、このメールを無視してください。<br>
         ご不明な点がございましたら、お気軽にお問い合わせください。
+      </p>
+    </div>
+    <div style="background:#f7f7f7;padding:16px;text-align:center">
+      <p style="color:#B0B0B0;font-size:11px;margin:0">&copy; 2026 Sofvo. All rights reserved.</p>
+    </div>
+  </div>
+</div>
+    `,
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 通知用メールアドレス（Apple/Google Sign In等、認証メールを
+// 変更できないユーザー向けの代替送信先）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 本人が新しいメールアドレスを入力 → 確認メールを送る（まだ確定はしない）
+exports.requestNotificationEmailVerification = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const uid = context.auth.uid;
+  const email = data && typeof data.email === "string" ? data.email.trim() : "";
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new functions.https.HttpsError("invalid-argument", "正しいメールアドレスを入力してください");
+  }
+
+  const db = admin.firestore();
+  const token = crypto.randomUUID();
+
+  // メールアドレスは個人情報なので、他ユーザーが読める users/{uid} 本体ではなく
+  // 本人のみ読み書きできる private/info サブドキュメントに保存する
+  await db.collection("users").doc(uid).collection("private").doc("info").set({
+    pendingNotificationEmail: email,
+    pendingNotificationEmailToken: token,
+    pendingNotificationEmailRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  const userSnap = await db.collection("users").doc(uid).get();
+  const nickname = (userSnap.exists && userSnap.data().nickname) || "ユーザー";
+
+  await sendNotificationEmailVerificationMailTo(email, nickname, uid, token);
+  return { sent: true };
+});
+
+// 確認メール内のリンクから叩かれる（メールクライアントから開かれるためログイン不要）
+exports.verifyNotificationEmail = functions.https.onRequest(async (req, res) => {
+  const uid = (req.query.uid || "").toString();
+  const token = (req.query.token || "").toString();
+
+  const fail = (message) => {
+    res.status(400).send(`<!doctype html><html lang="ja"><meta charset="utf-8">
+      <body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#1A1A1A;">
+        <h2>確認できませんでした</h2><p>${message}</p>
+      </body></html>`);
+  };
+
+  if (!uid || !token) return fail("リンクが正しくありません。");
+
+  const db = admin.firestore();
+  const userSnap = await db.collection("users").doc(uid).get();
+  if (!userSnap.exists) return fail("ユーザーが見つかりません。");
+
+  const privateRef = db.collection("users").doc(uid).collection("private").doc("info");
+  const privateSnap = await privateRef.get();
+  const privateData = privateSnap.exists ? (privateSnap.data() || {}) : {};
+  if (!privateData.pendingNotificationEmailToken || privateData.pendingNotificationEmailToken !== token) {
+    return fail("リンクの有効期限が切れているか、既に確認済みです。設定画面から再度お試しください。");
+  }
+
+  // 24時間で失効
+  const requestedAt = privateData.pendingNotificationEmailRequestedAt;
+  if (requestedAt && Date.now() - requestedAt.toMillis() > 24 * 60 * 60 * 1000) {
+    await privateRef.update({
+      pendingNotificationEmail: admin.firestore.FieldValue.delete(),
+      pendingNotificationEmailToken: admin.firestore.FieldValue.delete(),
+      pendingNotificationEmailRequestedAt: admin.firestore.FieldValue.delete(),
+    });
+    return fail("リンクの有効期限が切れています。設定画面から再度お試しください。");
+  }
+
+  await privateRef.update({
+    notificationEmail: privateData.pendingNotificationEmail,
+    notificationEmailVerified: true,
+    pendingNotificationEmail: admin.firestore.FieldValue.delete(),
+    pendingNotificationEmailToken: admin.firestore.FieldValue.delete(),
+    pendingNotificationEmailRequestedAt: admin.firestore.FieldValue.delete(),
+  });
+
+  res.status(200).send(`<!doctype html><html lang="ja"><meta charset="utf-8">
+    <body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#1A1A1A;">
+      <h2 style="color:#1B3A5C;">確認できました</h2>
+      <p>通知用メールアドレスの設定が完了しました。<br>このタブは閉じて構いません。</p>
+    </body></html>`);
+});
+
+async function sendNotificationEmailVerificationMailTo(email, nickname, uid, token) {
+  const gmailUser = process.env.GMAIL_USER || functions.config().gmail?.user;
+  const gmailPass = process.env.GMAIL_PASS || functions.config().gmail?.pass;
+  if (!gmailUser || !gmailPass) throw new Error("Gmail credentials not configured");
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: gmailUser, pass: gmailPass },
+  });
+
+  const verifyUrl =
+    `https://us-central1-sofvo-19d84.cloudfunctions.net/verifyNotificationEmail` +
+    `?uid=${encodeURIComponent(uid)}&token=${encodeURIComponent(token)}`;
+
+  await transporter.sendMail({
+    from: `Sofvo <info@sofvo.com>`,
+    to: email,
+    subject: "通知用メールアドレスの確認 - Sofvo",
+    html: `
+<div style="background-color:#f7f7f7;padding:40px 0;font-family:'Helvetica Neue',Arial,sans-serif">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+    <div style="background:linear-gradient(135deg,#1B3A5C,#2E5C8A);padding:32px;text-align:center">
+      <h1 style="margin:0;font-size:32px;letter-spacing:3px">
+        <span style="color:#ffffff;font-weight:900">Sof</span><span style="color:#C4A962;font-weight:900">vo</span>
+      </h1>
+    </div>
+    <div style="padding:32px">
+      <h2 style="color:#1B3A5C;font-size:18px;margin:0 0 16px">${nickname}さん</h2>
+      <p style="color:#6B6B6B;font-size:14px;line-height:1.8;margin:0 0 24px">
+        このメールアドレスを Sofvo の「通知用メールアドレス」として設定するリクエストを受け付けました。<br>
+        下のボタンから確認すると、今後の通知メールがこのアドレスに届くようになります。
+      </p>
+      <div style="text-align:center;margin:0 0 8px">
+        <a href="${verifyUrl}" style="background-color:#1B3A5C;color:#ffffff;text-decoration:none;padding:14px 48px;border-radius:8px;font-size:15px;font-weight:bold;display:inline-block">このメールアドレスを設定する</a>
+      </div>
+      <p style="color:#B0B0B0;font-size:12px;line-height:1.6;margin:24px 0 0;border-top:1px solid #eee;padding-top:16px">
+        リンクの有効期限は24時間です。このメールに心当たりがない場合は、このメールを無視してください（設定は反映されません）。
       </p>
     </div>
     <div style="background:#f7f7f7;padding:16px;text-align:center">
