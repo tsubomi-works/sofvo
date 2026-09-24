@@ -209,9 +209,18 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                       !normalizeForSearch(name).contains(_query)) {
                     continue;
                   }
+                  // 同じ名前の別アカウントを誤って招待しないよう、
+                  // 見分けの手がかりとして都道府県を表示する
+                  final rawArea = data['area'];
+                  final area = rawArea is String
+                      ? rawArea
+                      : rawArea is Map
+                          ? '${rawArea['prefecture'] ?? ''}${rawArea['city'] ?? ''}'
+                          : '';
                   items.add(_PickerItem(
                     uid: followings[i].id,
                     name: name,
+                    area: area,
                     avatarUrl: (data['avatarUrl'] ?? '').toString(),
                     teammateCount: counts[followings[i].id] ?? 0,
                     takenByTeamName: taken[followings[i].id],
@@ -262,10 +271,22 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
                                       style: const TextStyle(
                                           color: AppTheme.primaryColor))),
                         ),
-                        title: Text(item.name,
-                            style: TextStyle(
-                                fontSize: 14,
-                                color: isTaken ? Colors.grey[400] : null)),
+                        title: Row(children: [
+                          Flexible(
+                            child: Text(item.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 14,
+                                    color: isTaken ? Colors.grey[400] : null)),
+                          ),
+                          if (item.area.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Text('（${item.area}）',
+                                style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: isTaken ? Colors.grey[400] : AppTheme.textHint)),
+                          ],
+                        ]),
                         subtitle: isTaken
                             ? Text('「${item.takenByTeamName}」に招待中/エントリー済み',
                                 style: TextStyle(fontSize: 11, color: Colors.grey[400]))
@@ -310,12 +331,14 @@ class _FollowerMemberPickerState extends State<FollowerMemberPicker> {
 class _PickerItem {
   final String uid;
   final String name;
+  final String area;
   final String avatarUrl;
   final int teammateCount;
   final String? takenByTeamName;
   _PickerItem({
     required this.uid,
     required this.name,
+    required this.area,
     required this.avatarUrl,
     required this.teammateCount,
     this.takenByTeamName,
