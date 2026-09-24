@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../config/app_theme.dart';
+import '../utils/in_app_link.dart';
+import '../utils/tournament_checkin_link.dart';
 
 /// OGPメタデータ
 class OgpData {
@@ -129,13 +131,44 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
   }
 
   Future<void> _fetchData() async {
-    final data = await fetchOgpData(widget.url);
+    final data =
+        await _fetchSofvoTournamentPreview() ?? await fetchOgpData(widget.url);
     if (!mounted) return;
     setState(() {
       _ogpData = data;
       _loading = false;
       _error = data == null;
     });
+  }
+
+  /// Sofvo の大会リンクは OGP ではなく大会情報（大会名・日付・会場）でプレビューする
+  Future<OgpData?> _fetchSofvoTournamentPreview() async {
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null) return null;
+    final tid = parseCheckInTournamentIdFromDeepLinkUri(uri) ??
+        parseSofvoTournamentIdFromUri(uri);
+    if (tid == null || tid.isEmpty) return null;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('tournaments')
+          .doc(tid)
+          .get();
+      if (!doc.exists) return null;
+      final d = doc.data()!;
+      final title = (d['title'] ?? d['name'] ?? '大会').toString();
+      final details = [
+        d['date'] is String ? d['date'] as String : '',
+        (d['location'] ?? d['venue'] ?? '').toString(),
+      ].where((s) => s.isNotEmpty).join(' / ');
+      return OgpData(
+        title: title,
+        description: details,
+        siteName: 'Sofvo 大会',
+        url: widget.url,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -173,12 +206,7 @@ class _LinkPreviewWidgetState extends State<LinkPreviewWidget> {
 
     final ogp = _ogpData!;
     return GestureDetector(
-      onTap: () async {
-        final uri = Uri.parse(widget.url);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
-      },
+      onTap: () => openLinkInAppOrExternal(context, widget.url),
       child: Container(
         margin: const EdgeInsets.only(top: 8),
         constraints: const BoxConstraints(maxWidth: 260),

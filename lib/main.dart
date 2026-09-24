@@ -26,6 +26,7 @@ import 'screens/home/main_tab_screen.dart';
 import 'screens/tournament/tournament_detail_screen.dart';
 import 'services/in_app_browser.dart';
 import 'utils/tournament_checkin_link.dart';
+import 'utils/in_app_link.dart';
 import 'demo/demo_service.dart';
 import 'demo/demo_overlay.dart';
 
@@ -264,6 +265,14 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (tid != null && tid.isNotEmpty) {
       pendingCheckInTournamentId = tid;
       changed = true;
+    } else {
+      // 大会共有リンク（?t=xxx / /tournament/xxx）→ 大会詳細へ
+      final shareTid = parseSofvoTournamentIdFromUri(uri);
+      if (shareTid != null && shareTid.isNotEmpty) {
+        pendingTournamentId = shareTid;
+        _navigatedToTournament = false;
+        changed = true;
+      }
     }
 
     if (changed && mounted) setState(() {});
