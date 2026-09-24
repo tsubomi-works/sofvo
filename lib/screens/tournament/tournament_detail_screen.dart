@@ -4781,6 +4781,14 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       },
     );
   }
+  // キャプテンを先頭にしたメンバー名の一覧（主催者向けのチームカード表示用）
+  List<String> _orderedMemberNames(Map<String, dynamic> memberNames, String leaderName) {
+    final names = memberNames.values.map((v) => v?.toString() ?? '').where((n) => n.isNotEmpty).toList();
+    final i = names.indexOf(leaderName);
+    if (i > 0) names.insert(0, names.removeAt(i));
+    return names;
+  }
+
   void _showMemberList(String teamName, Map<String, dynamic> memberNames, String leaderName) {
     final members = memberNames.entries.toList();
     // leaderNameと一致するメンバーを先頭に並べ替え
@@ -5087,7 +5095,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: GestureDetector(
-                      onTap: isMyTeam ? () => _showEditEntrySheet(doc) : null,
+                      // 主催者・編集者は他チームもタップでメンバー一覧（誰がエントリーしたか）を確認できる
+                      onTap: isMyTeam
+                          ? () => _showEditEntrySheet(doc)
+                          : canManage
+                              ? () => _showMemberList(teamName.toString(), Map<String, dynamic>.from(memberNames), leader.toString())
+                              : null,
                       child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
@@ -5112,6 +5125,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                                 ),
                               ],
                             ]),
+                            if (canManage && memberNames.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                _orderedMemberNames(memberNames, leader.toString()).join('・'),
+                                style: const TextStyle(fontSize: 12, color: AppTheme.textPrimary),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ]),
                         ),
                         if (isMyTeam) ...[
@@ -5122,8 +5144,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           ),
                           const SizedBox(width: 8),
                           Icon(Icons.chevron_right, size: 20, color: AppTheme.textHint),
-                        ] else if (!isCheckedIn && checkedInTeamIds.isNotEmpty) ...[
-                          Text('未到着', style: TextStyle(fontSize: 11, color: AppTheme.textHint)),
+                        ] else ...[
+                          if (!isCheckedIn && checkedInTeamIds.isNotEmpty)
+                            Text('未到着', style: TextStyle(fontSize: 11, color: AppTheme.textHint)),
+                          if (canManage) ...[
+                            const SizedBox(width: 4),
+                            Icon(Icons.chevron_right, size: 20, color: AppTheme.textHint),
+                          ],
                         ],
                       ]),
                     ),
