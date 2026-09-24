@@ -10,6 +10,7 @@ import '../../config/app_theme.dart';
 import 'package:flutter/gestures.dart';
 import '../../widgets/official_badge.dart';
 import '../../widgets/link_preview_widget.dart';
+import '../../utils/in_app_link.dart';
 import '../profile/user_profile_screen.dart';
 import 'group_chat_settings_screen.dart';
 import '../../services/push_notification_service.dart';
@@ -1474,12 +1475,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           color: isMe ? Colors.white : AppTheme.primaryColor,
         ),
         recognizer: TapGestureRecognizer()
-          ..onTap = () async {
-            final uri = Uri.parse(url);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          },
+          ..onTap = () => openLinkInAppOrExternal(context, url),
       ));
       lastEnd = match.end;
     }
