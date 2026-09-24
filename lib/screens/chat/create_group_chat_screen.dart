@@ -17,7 +17,7 @@ class CreateGroupChatScreen extends StatefulWidget {
 }
 
 class _CreateGroupChatScreenState extends State<CreateGroupChatScreen> {
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
   final _searchController = TextEditingController();
   final _groupNameController = TextEditingController();
   final _picker = ImagePicker();

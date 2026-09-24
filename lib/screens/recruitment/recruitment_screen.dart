@@ -16,7 +16,7 @@ class RecruitmentScreen extends StatefulWidget {
 class _RecruitmentScreenState extends State<RecruitmentScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
   List<Map<String, dynamic>> _upcoming = [];
   List<Map<String, dynamic>> _past = [];
   bool _loading = true;

@@ -32,7 +32,7 @@ class TournamentManagementScreen extends StatefulWidget {
 }
 
 class _TournamentManagementScreenState extends State<TournamentManagementScreen> {
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
 
   static const _iconOptions = <String, IconData>{
     'emoji_events': Icons.emoji_events,

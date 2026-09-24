@@ -3569,6 +3569,168 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
   return { finalized: result.finalized, declined: !!result.declined, memberAdd: !!result.memberAdd };
 });
 
+// キャプテン・主催者・管理者が、招待された本人に代わって承認する（最終手段）。
+// 本人がアカウント不整合やアプリ不具合等でどうしても自分で承認できない場合の
+// 救済用。respondEntryInvite(approve: true) と同じ成立ロジックを流用するが、
+// 呼び出し元が「本人以外」である点が異なるため、誰がいつ代理承認したかを
+// approvedByAdmin に記録して監査できるようにする。
+exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const callerUid = context.auth.uid;
+  const db = admin.firestore();
+
+  const tournamentId = data && data.tournamentId ? String(data.tournamentId) : "";
+  const draftId = data && data.draftId ? String(data.draftId) : "";
+  const targetUid = data && data.targetUid ? String(data.targetUid) : "";
+  if (!tournamentId || !draftId || !targetUid) {
+    throw new functions.https.HttpsError("invalid-argument", "tournamentId・draftId・targetUid を指定してください");
+  }
+
+  const tRef = db.collection("tournaments").doc(tournamentId);
+  const draftRef = tRef.collection("entryDrafts").doc(draftId);
+
+  const [draftSnapPre, tSnapPre, callerSnap] = await Promise.all([
+    draftRef.get(), tRef.get(), db.collection("users").doc(callerUid).get(),
+  ]);
+  if (!draftSnapPre.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません");
+  const draftPre = draftSnapPre.data() || {};
+  const organizerId = (tSnapPre.data() || {}).organizerId;
+  const isAdmin = callerSnap.data()?.isAdmin === true;
+  if (draftPre.leaderUid !== callerUid && organizerId !== callerUid && !isAdmin) {
+    throw new functions.https.HttpsError("permission-denied", "代理承認できるのはキャプテン・主催者・管理者のみです");
+  }
+  const callerName = (callerSnap.data() || {}).nickname || "管理者";
+
+  const result = await db.runTransaction(async (tx) => {
+    const draftSnap = await tx.get(draftRef);
+    if (!draftSnap.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません（取り消された可能性があります）");
+    const draft = draftSnap.data() || {};
+    const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+    if (!invited.includes(targetUid)) throw new functions.https.HttpsError("not-found", "対象のユーザーはこの招待の対象に含まれていません");
+
+    const approvedByAdmin = Object.assign({}, draft.approvedByAdmin || {});
+    approvedByAdmin[targetUid] = { byUid: callerUid, byName: callerName };
+
+    if (draft.type === "memberAdd") {
+      const entryRef = tRef.collection("entries").doc(draft.entryId);
+      const entrySnap = await tx.get(entryRef);
+      if (!entrySnap.exists) {
+        tx.delete(draftRef);
+        throw new functions.https.HttpsError("not-found", "エントリーが見つかりません（削除された可能性があります）");
+      }
+      const approvals = Object.assign({}, draft.approvals || {});
+      approvals[targetUid] = "approved";
+      const entriesSnap = await tx.get(tRef.collection("entries"));
+      let takenTeam = null;
+      entriesSnap.forEach((d) => {
+        if (d.id === draft.entryId) return;
+        const uids = Array.isArray(d.data().memberUids) ? d.data().memberUids : [];
+        if (uids.includes(targetUid)) takenTeam = d.data().teamName || "別のチーム";
+      });
+      if (takenTeam) {
+        throw new functions.https.HttpsError("failed-precondition", `既に「${takenTeam}」でエントリー成立済みのため、このチームには追加できません`);
+      }
+      const update = { memberUids: admin.firestore.FieldValue.arrayUnion(targetUid) };
+      update[`memberNames.${targetUid}`] = (draft.memberNames || {})[targetUid] || "名前なし";
+      update[`memberAvatars.${targetUid}`] = (draft.memberAvatars || {})[targetUid] || "";
+      tx.update(entryRef, update);
+      const anyPending = invited.some((u) => (approvals[u] || "pending") === "pending");
+      if (anyPending) {
+        tx.update(draftRef, { approvals, approvedByAdmin });
+      } else {
+        tx.delete(draftRef);
+      }
+      return { memberAdd: true, finalized: true, teamName: draft.teamName, targetUid };
+    }
+
+    const approvals = Object.assign({}, draft.approvals || {});
+    approvals[targetUid] = "approved";
+    const activeInvited = invited.filter((u) => approvals[u] !== "declined");
+    const allApproved = activeInvited.length > 0 && activeInvited.every((u) => approvals[u] === "approved");
+
+    if (allApproved && activeInvited.length >= 4) {
+      const entriesSnap = await tx.get(tRef.collection("entries"));
+      let conflictInfo = null;
+      entriesSnap.forEach((d) => {
+        const uids = Array.isArray(d.data().memberUids) ? d.data().memberUids : [];
+        for (const u of activeInvited) {
+          if (uids.includes(u)) { conflictInfo = d.data().teamName || "別のチーム"; break; }
+        }
+      });
+      if (conflictInfo) {
+        throw new functions.https.HttpsError("failed-precondition",
+          `メンバーの誰かが既に「${conflictInfo}」でエントリー成立済みのため、このチームは成立できません`);
+      }
+      const activeMemberNames = {};
+      const activeMemberAvatars = {};
+      activeInvited.forEach((u) => {
+        activeMemberNames[u] = (draft.memberNames || {})[u] || "名前なし";
+        activeMemberAvatars[u] = (draft.memberAvatars || {})[u] || "";
+      });
+      const entryRef = tRef.collection("entries").doc();
+      tx.set(entryRef, {
+        teamId: entryRef.id,
+        teamName: draft.teamName,
+        leaderUid: draft.leaderUid,
+        leaderName: draft.leaderName,
+        memberUids: activeInvited,
+        memberNames: activeMemberNames,
+        memberAvatars: activeMemberAvatars,
+        enteredBy: draft.leaderUid,
+        adminApprovals: approvedByAdmin,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.delete(draftRef);
+      return { finalized: true, teamName: draft.teamName, activeInvited, targetUid };
+    }
+    tx.update(draftRef, { approvals, approvedByAdmin });
+    return { finalized: false, teamName: draft.teamName, targetUid, leaderUid: draft.leaderUid };
+  });
+
+  // 代理承認された本人に知らせる
+  try {
+    const tName = (tSnapPre.data() || {}).name || "";
+    await db.collection("users").doc(targetUid).collection("notifications").add({
+      type: "entry_confirmed",
+      senderId: callerUid, senderName: callerName, senderAvatar: "",
+      tournamentId, tournamentName: tName, teamName: result.teamName,
+      message: result.finalized
+        ? `がチーム「${result.teamName}」への参加を代わりに承認し、エントリーが成立しました`
+        : `がチーム「${result.teamName}」への参加を代わりに承認しました`,
+      read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) { console.error("[adminApproveEntryDraftMember] notify target failed:", e); }
+
+  if (result.finalized && !result.memberAdd) {
+    const invited = result.activeInvited || [];
+    await followOrganizerForEntrants(db, tournamentId, invited);
+    const tName = (tSnapPre.data() || {}).name || "";
+    try {
+      await tRef.collection("timeline").add({
+        authorId: "system", authorName: "システム", authorAvatar: "",
+        text: `${result.teamName}がエントリーしました！`,
+        isOrganizer: false, pinned: false, likesCount: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) { console.error("[adminApproveEntryDraftMember] timeline failed:", e); }
+    await Promise.all(invited.filter((u) => u !== targetUid).map(async (u) => {
+      try {
+        await db.collection("users").doc(u).collection("notifications").add({
+          type: "entry_confirmed",
+          senderId: "system", senderName: "システム", senderAvatar: "",
+          tournamentId, tournamentName: tName, teamName: result.teamName,
+          message: `チーム「${result.teamName}」のエントリーが成立しました`,
+          read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) { /* noop */ }
+    }));
+  } else if (result.finalized && result.memberAdd) {
+    await followOrganizerForEntrants(db, tournamentId, [targetUid]);
+  }
+
+  return { approved: true, finalized: !!result.finalized, teamName: result.teamName };
+});
+
 // 招待された本人が承認待ちバナーを開いた（＝招待を目にした）ことを記録する。
 // キャプテン側に「既読・未回答」/「未読」を出し分けるためだけの軽量な既読フラグ。
 // 承認/辞退の判定には一切使わない（approvals が唯一の正）。

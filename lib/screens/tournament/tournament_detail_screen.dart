@@ -5001,6 +5001,17 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                         child: Icon(Icons.notifications_active_outlined, size: 16, color: AppTheme.accentColor),
                       ),
                     ),
+                    InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _adminApproveEntryDraftMember(draftId, u, nm);
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(Icons.verified_outlined, size: 16, color: AppTheme.primaryColor),
+                      ),
+                    ),
                   ],
                 ]),
               );
@@ -6521,6 +6532,39 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? '再通知に失敗しました'), backgroundColor: AppTheme.error));
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('再通知に失敗しました'), backgroundColor: AppTheme.error));
+    }
+  }
+
+  Future<void> _adminApproveEntryDraftMember(String draftId, String targetUid, String targetName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('代わりに承認しますか？'),
+        content: Text(
+            '$targetName さん本人がアプリの不具合等でどうしても自分で承認できない場合の最終手段です。\n\n必ず本人に「参加してよいか」を別途確認した上で実行してください。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('キャンセル')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('代わりに承認する', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold))),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('adminApproveEntryDraftMember');
+      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      final finalized = (res.data as Map)['finalized'] == true;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(finalized
+            ? '$targetName さんを代わりに承認し、エントリーが成立しました！'
+            : '$targetName さんを代わりに承認しました'),
+        backgroundColor: AppTheme.success,
+      ));
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? '代理承認に失敗しました'), backgroundColor: AppTheme.error));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代理承認に失敗しました'), backgroundColor: AppTheme.error));
     }
   }
 

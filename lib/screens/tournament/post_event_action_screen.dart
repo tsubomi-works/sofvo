@@ -414,7 +414,7 @@ class _TournamentParticipantsScreen extends StatefulWidget {
 
 class _TournamentParticipantsScreenState extends State<_TournamentParticipantsScreen> {
   final _firestore = FirebaseFirestore.instance;
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
   final Set<String> _followingIds = {};
   List<Map<String, dynamic>> _participants = [];
   bool _loading = true;

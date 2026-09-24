@@ -15,7 +15,7 @@ class RecruitmentManagementScreen extends StatefulWidget {
 
 class _RecruitmentManagementScreenState
     extends State<RecruitmentManagementScreen> {
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
   bool _viewerIsOfficial = false;
   bool _officialLoaded = false;
 

@@ -24,7 +24,7 @@ class FollowSearchScreen extends StatefulWidget {
 class _FollowSearchScreenState extends State<FollowSearchScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
 
   // ID・ニックネーム検索
   final _idController = TextEditingController();
