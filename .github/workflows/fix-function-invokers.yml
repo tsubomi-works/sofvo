@@ -41,6 +41,7 @@ jobs:
             verifyNotificationEmail
             removeEntryDraftMember
             addEntryDraftMember
+            resendEntryInviteNotification
           "
           failed=0
           for f in $FUNCS; do

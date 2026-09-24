@@ -4971,8 +4971,29 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(children: [
-                  Expanded(child: Text(nm, style: const TextStyle(fontSize: 14))),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => UserProfileScreen(userId: u))),
+                      child: Text(nm,
+                          style: const TextStyle(fontSize: 14, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
+                    ),
+                  ),
                   Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+                  if (st == 'pending') ...[
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _resendEntryInvite(draftId, u, nm);
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(Icons.notifications_active_outlined, size: 16, color: AppTheme.accentColor),
+                      ),
+                    ),
+                  ],
                 ]),
               );
             }),
@@ -6328,13 +6349,30 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 3),
                         child: Row(children: [
-                          Expanded(child: Text(nm, style: const TextStyle(fontSize: 13))),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => UserProfileScreen(userId: u))),
+                              child: Text(nm,
+                                  style: const TextStyle(fontSize: 13, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
+                            ),
+                          ),
                           Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+                          if (st == 'pending') ...[
+                            InkWell(
+                              onTap: () => _resendEntryInvite(d.id, u, nm),
+                              borderRadius: BorderRadius.circular(12),
+                              child: const Padding(
+                                padding: EdgeInsets.only(left: 4, top: 2, bottom: 2, right: 2),
+                                child: Icon(Icons.notifications_active_outlined, size: 15, color: AppTheme.accentColor),
+                              ),
+                            ),
+                          ],
                           InkWell(
                             onTap: () => _removeEntryDraftMember(d.id, u, nm),
                             borderRadius: BorderRadius.circular(12),
                             child: const Padding(
-                              padding: EdgeInsets.only(left: 6, top: 2, bottom: 2, right: 2),
+                              padding: EdgeInsets.only(left: 4, top: 2, bottom: 2, right: 2),
                               child: Icon(Icons.close, size: 16, color: AppTheme.textHint),
                             ),
                           ),
@@ -6440,6 +6478,22 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       }
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('取り消しに失敗しました'), backgroundColor: AppTheme.error));
+    }
+  }
+
+  Future<void> _resendEntryInvite(String draftId, String targetUid, String targetName) async {
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('resendEntryInviteNotification');
+      await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$targetName さんに招待を再通知しました'),
+        backgroundColor: AppTheme.success,
+      ));
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? '再通知に失敗しました'), backgroundColor: AppTheme.error));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('再通知に失敗しました'), backgroundColor: AppTheme.error));
     }
   }
 

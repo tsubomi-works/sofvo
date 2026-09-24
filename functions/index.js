@@ -4818,40 +4818,32 @@ exports.debugEntryInviteStatus = functions.https.onCall(async (data, context) =>
   };
 });
 
-// 承認待ちの招待通知を再送する（管理者のみ）。entryDrafts のデータ自体（招待状態）は
-// 一切変更しない。通知が消された／何らかの理由で届かなかった場合の救済用。
-// name か uid のどちらかで対象を指定できる（debugEntryInviteStatus と同じ探し方）。
+// 承認待ちの招待通知を再送する。entryDrafts のデータ自体（招待状態）は一切変更せず、
+// entry_invite 通知だけを対象ユーザーに作り直す。通知が消された／何らかの理由で
+// 届かなかった場合の救済用。呼べるのはそのドラフトのキャプテン・大会の主催者・管理者のみ。
 exports.resendEntryInviteNotification = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const uid = context.auth.uid;
   const db = admin.firestore();
-  await assertAdmin(context, db);
 
   const tournamentId = data && data.tournamentId ? String(data.tournamentId) : "";
   const draftId = data && data.draftId ? String(data.draftId) : "";
-  if (!tournamentId || !draftId) {
-    throw new functions.https.HttpsError("invalid-argument", "tournamentId・draftId を指定してください");
+  const targetUid = data && data.targetUid ? String(data.targetUid) : "";
+  if (!tournamentId || !draftId || !targetUid) {
+    throw new functions.https.HttpsError("invalid-argument", "tournamentId・draftId・targetUid を指定してください");
   }
-
-  let targetUid = data && data.targetUid ? String(data.targetUid) : "";
-  if (!targetUid && data && data.name) {
-    const norm = normalizeForSearch(String(data.name));
-    const snap = await db.collection("users").where("nicknameNorm", "==", norm).limit(10).get();
-    if (snap.size === 0) {
-      throw new functions.https.HttpsError("not-found", `「${data.name}」に一致するユーザーが見つかりません`);
-    }
-    if (snap.size > 1) {
-      throw new functions.https.HttpsError("failed-precondition",
-        `「${data.name}」に一致するユーザーが複数います: ` +
-          snap.docs.map((d) => `${d.data().nickname || ""}(${d.id})`).join(", "));
-    }
-    targetUid = snap.docs[0].id;
-  }
-  if (!targetUid) throw new functions.https.HttpsError("invalid-argument", "targetUid または name を指定してください");
 
   const tRef = db.collection("tournaments").doc(tournamentId);
   const draftRef = tRef.collection("entryDrafts").doc(draftId);
-  const draftSnap = await draftRef.get();
+  const [draftSnap, tSnap] = await Promise.all([draftRef.get(), tRef.get()]);
   if (!draftSnap.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません");
   const draft = draftSnap.data() || {};
+  const organizerId = (tSnap.data() || {}).organizerId;
+  const isAdmin = (await db.collection("users").doc(uid).get()).data()?.isAdmin === true;
+  if (draft.leaderUid !== uid && organizerId !== uid && !isAdmin) {
+    throw new functions.https.HttpsError("permission-denied", "再通知できるのはキャプテン・主催者・管理者のみです");
+  }
+
   const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
   if (!invited.includes(targetUid)) {
     throw new functions.https.HttpsError("not-found", "対象のユーザーはこの招待の対象に含まれていません（別アカウントを招待している可能性があります）");
@@ -4861,7 +4853,7 @@ exports.resendEntryInviteNotification = functions.https.onCall(async (data, cont
     throw new functions.https.HttpsError("failed-precondition", "既に承認済みです（再通知の必要はありません）");
   }
 
-  const tName = ((await tRef.get()).data() || {}).name || "";
+  const tName = (tSnap.data() || {}).name || "";
   const leaderUid = draft.leaderUid || "";
   await db.collection("users").doc(targetUid).collection("notifications").add({
     type: "entry_invite",
