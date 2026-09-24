@@ -20,7 +20,7 @@ class TournamentSearchScreen extends StatefulWidget {
 
 class _TournamentSearchScreenState extends State<TournamentSearchScreen>
     with TickerProviderStateMixin {
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
   final _searchController = TextEditingController();
   Set<String> _followingIds = {};
   Set<String> _bookmarkedTournaments = {};

@@ -25,7 +25,7 @@ class FindFriendsScreen extends StatefulWidget {
 
 class _FindFriendsScreenState extends State<FindFriendsScreen> {
   final _codeController = TextEditingController();
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
 
   bool _redeeming = false;
   bool _loadingRecommend = true;

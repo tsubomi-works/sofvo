@@ -16,7 +16,9 @@ class NotificationScreen extends StatefulWidget {
 }
 
 class _NotificationScreenState extends State<NotificationScreen> {
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  // アカウント切り替え後も必ず最新のログインユーザーを参照する（State生成時の
+  // 1回だけ評価される field だと、切り替え前のuidを掴んだままになる恐れがある）
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
 
   @override
   void initState() {

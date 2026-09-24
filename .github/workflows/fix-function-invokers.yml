@@ -42,6 +42,7 @@ jobs:
             removeEntryDraftMember
             addEntryDraftMember
             resendEntryInviteNotification
+            adminApproveEntryDraftMember
           "
           failed=0
           for f in $FUNCS; do

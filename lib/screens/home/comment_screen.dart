@@ -22,7 +22,7 @@ class CommentScreen extends StatefulWidget {
 class _CommentScreenState extends State<CommentScreen> {
   final _commentController = TextEditingController();
   final _scrollController = ScrollController();
-  final _currentUser = FirebaseAuth.instance.currentUser;
+  User? get _currentUser => FirebaseAuth.instance.currentUser;
   bool _isSending = false;
   final Map<String, bool> _officialCache = {};
 
