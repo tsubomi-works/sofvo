@@ -5069,7 +5069,8 @@ exports.resendEntryInviteNotification = functions.https.onCall(async (data, cont
     senderId: leaderUid,
     senderName: draft.leaderName || "",
     senderAvatar: (draft.memberAvatars || {})[leaderUid] || "",
-    message: `が大会「${tName}」のチーム「${draft.teamName}」に招待しました`,
+    message: `が大会「${tName}」のチーム「${draft.teamName}」への参加承認を待っています`,
+    resend: true,
     read: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -5373,6 +5374,10 @@ exports.onNotificationCreatedPush = functions.firestore
       team_join: "team",
       team_leave: "team",
       entry_canceled: "tournament",
+      // 大会エントリーの招待（再通知・追加招待も同じ type）と、その結果（成立・辞退）
+      entry_invite: "tournament",
+      entry_confirmed: "tournament",
+      entry_declined: "tournament",
     };
 
     const settingKey = settingKeyMap[notifType];
@@ -5412,6 +5417,13 @@ exports.onNotificationCreatedPush = functions.firestore
       case "team_leave":
         title = "チーム";
         break;
+      case "entry_invite":
+        title = data.resend ? "大会エントリーへの招待（再通知）" : "大会エントリーへの招待";
+        break;
+      case "entry_confirmed":
+        title = "大会エントリー成立";
+        break;
+      case "entry_declined":
       case "entry_canceled":
         title = "大会エントリー";
         break;
@@ -5419,7 +5431,8 @@ exports.onNotificationCreatedPush = functions.firestore
         title = "Sofvo";
     }
 
-    const body = senderName ? `${senderName}${message}` : message;
+    // 送信者が「システム」の通知は本文に送信者名を付けない（「システムチーム…」のようになるため）
+    const body = (senderName && senderName !== "システム") ? `${senderName}${message}` : message;
 
     // 遷移先データ
     const navData = { type: notifType };
