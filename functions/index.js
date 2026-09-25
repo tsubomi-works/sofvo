@@ -3569,7 +3569,8 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
   return { finalized: result.finalized, declined: !!result.declined, memberAdd: !!result.memberAdd };
 });
 
-// キャプテン・主催者・管理者が、招待された本人に代わって承認する（最終手段）。
+// 主催者・管理者が、招待された本人に代わって承認する（最終手段）。
+// キャプテンは当事者（チームを揃えたい側）で本人の同意なしに参加させられてしまうため対象外。
 // 本人がアカウント不整合やアプリ不具合等でどうしても自分で承認できない場合の
 // 救済用。respondEntryInvite(approve: true) と同じ成立ロジックを流用するが、
 // 呼び出し元が「本人以外」である点が異なるため、誰がいつ代理承認したかを
@@ -3596,8 +3597,8 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
   const draftPre = draftSnapPre.data() || {};
   const organizerId = (tSnapPre.data() || {}).organizerId;
   const isAdmin = callerSnap.data()?.isAdmin === true;
-  if (draftPre.leaderUid !== callerUid && organizerId !== callerUid && !isAdmin) {
-    throw new functions.https.HttpsError("permission-denied", "代理承認できるのはキャプテン・主催者・管理者のみです");
+  if (organizerId !== callerUid && !isAdmin) {
+    throw new functions.https.HttpsError("permission-denied", "代理承認できるのは主催者・管理者のみです");
   }
   const callerName = (callerSnap.data() || {}).nickname || "管理者";
 
