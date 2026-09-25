@@ -1,3 +1,7 @@
+import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
+
+import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
@@ -164,13 +168,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
 }
 
 /// 分離されたナビゲーションバー — チャットバッジの更新で他のタブがリビルドされない
-///
-/// iOS 26 の Liquid Glass を liquid_glass_widgets の GlassTabBar で描く。
-/// ネイティブ（Impeller）はシェーダーで縁の屈折・色収差・光沢まで再現し、
-/// Web は軽量シェーダーに自動で切り替わる（プラットフォーム分岐はパッケージ側）。
-/// 下スクロールで選択中タブの丸だけに縮み（iOS 26 の tabBarMinimizeBehavior）、
-/// 縮んだ丸をタップ or 上スクロールで元に戻る。
-class _BottomNav extends StatelessWidget {
+class _BottomNav extends StatefulWidget {
   const _BottomNav({
     required this.currentIndex,
     required this.onDestinationSelected,
@@ -178,7 +176,110 @@ class _BottomNav extends StatelessWidget {
   });
   final int currentIndex;
   final ValueChanged<int> onDestinationSelected;
-  final ValueNotifier<bool> collapsed;
+  final ValueListenable<bool> collapsed;
+
+  @override
+  State<_BottomNav> createState() => _BottomNavState();
+}
+
+class _BottomNavState extends State<_BottomNav>
+    with TickerProviderStateMixin {
+  // 指でなぞっている間のガラス化（1へフェードイン、離すとフェードアウト）
+  late final AnimationController _glassCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+  );
+  // タブ切替アニメ（前半で泡化して移動、後半でぷるぷる収束）。
+  // 泡の現在位置からアイコンの点灯タブも算出するためコントローラで持つ
+  late final AnimationController _moveCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 620),
+    value: 1.0, // 初期状態は着地済み
+  );
+  int _prevIndex = 0; // 直前に選択されていたタブ（移動の始点）
+  bool _dragging = false;
+  double _dragFrac = 0; // バー幅に対する指の位置（0〜1）
+  int _dragHover = -1; // なぞり中に指が乗っているタブ（ハプティクス用）
+
+  // 位置アニメ（300ms/easeOutBack）は全体620msのうちの前半に相当する
+  static const double _movePhase = 300 / 620;
+
+  @override
+  void initState() {
+    super.initState();
+    _prevIndex = widget.currentIndex;
+  }
+
+  @override
+  void didUpdateWidget(covariant _BottomNav old) {
+    super.didUpdateWidget(old);
+    if (widget.currentIndex != old.currentIndex) {
+      _prevIndex = old.currentIndex;
+      _moveCtrl.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _glassCtrl.dispose();
+    _moveCtrl.dispose();
+    super.dispose();
+  }
+
+  /// いま泡が乗っているタブ。このタブのアイコンをネイビーに点灯させる
+  int _bubbleTab(int n) {
+    if (_dragging) return _dragHover;
+    final t = _moveCtrl.value;
+    if (t >= 1) return widget.currentIndex;
+    // AnimatedAlign と同じカーブ・時間比で泡の現在位置を再現する
+    final p = Curves.easeOutBack
+        .transform(math.min(t / _movePhase, 1.0));
+    final f = _prevIndex + (widget.currentIndex - _prevIndex) * p;
+    return f.round().clamp(0, n - 1);
+  }
+
+  // 指の位置（0〜1）→ カプセル中心の Alignment.x（スロット中心にクランプ）
+  double _alignForFrac(double f, int n) {
+    if (n <= 1) return 0;
+    final x = ((f - 0.5 / n) / (1 - 1 / n)) * 2 - 1;
+    return x.clamp(-1.0, 1.0);
+  }
+
+  int _hoverIndex(double f, int n) => ((f * n).floor()).clamp(0, n - 1);
+
+  void _onDragStart(double dx, double width, int n) {
+    setState(() {
+      _dragging = true;
+      _dragFrac = (dx / width).clamp(0.0, 1.0);
+      _dragHover = _hoverIndex(_dragFrac, n);
+    });
+    _glassCtrl.forward();
+  }
+
+  void _onDragUpdate(double dx, double width, int n) {
+    final f = (dx / width).clamp(0.0, 1.0);
+    final hover = _hoverIndex(f, n);
+    if (hover != _dragHover) {
+      HapticFeedback.selectionClick(); // タブ境界を跨いだらコツッと
+    }
+    setState(() {
+      _dragFrac = f;
+      _dragHover = hover;
+    });
+  }
+
+  void _onDragEnd(int n) {
+    final target = _hoverIndex(_dragFrac, n);
+    setState(() => _dragging = false);
+    _glassCtrl.reverse();
+    widget.onDestinationSelected(target); // 最寄りのタブに吸着
+  }
+
+  void _onDragCancel() {
+    // キャンセル時はタブを切り替えず、泡だけ元のタブへ戻す
+    setState(() => _dragging = false);
+    _glassCtrl.reverse();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -213,19 +314,12 @@ class _BottomNav extends StatelessWidget {
           }
         }
 
-        final tabs = <GlassTab>[
-          const GlassTab(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home), label: 'ホーム'),
-          const GlassTab(icon: Icon(Icons.search_outlined), activeIcon: Icon(Icons.search), label: 'さがす'),
-          const GlassTab(
-              icon: Icon(Icons.calendar_today_outlined),
-              activeIcon: Icon(Icons.calendar_today),
-              label: 'マイ大会'),
-          GlassTab(
-            icon: _withBadge(const Icon(Icons.chat_bubble_outline), unreadCount),
-            activeIcon: _withBadge(const Icon(Icons.chat_bubble), unreadCount),
-            label: 'チャット',
-          ),
-          const GlassTab(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: 'マイページ'),
+        final items = <_NavItemData>[
+          const _NavItemData(Icons.home_outlined, Icons.home, 'ホーム'),
+          const _NavItemData(Icons.search_outlined, Icons.search, 'さがす'),
+          const _NavItemData(Icons.calendar_today_outlined, Icons.calendar_today, 'マイ大会'),
+          _NavItemData(Icons.chat_bubble_outline, Icons.chat_bubble, 'チャット', badge: unreadCount),
+          const _NavItemData(Icons.person_outline, Icons.person, 'マイページ'),
         ];
 
         // セーフエリア（ホームインジケータ領域）の余白を一部だけ残して下に詰める
@@ -233,38 +327,364 @@ class _BottomNav extends StatelessWidget {
           padding: EdgeInsets.only(
               bottom: MediaQuery.of(context).padding.bottom * 0.75),
           child: ValueListenableBuilder<bool>(
-            valueListenable: collapsed,
-            builder: (context, isCollapsed, _) => GlassTabBar.minimizable(
-              tabs: tabs,
-              selectedIndex: currentIndex,
-              onTabSelected: onDestinationSelected,
-              minimized: isCollapsed,
-              onMinimizedTabTap: () => collapsed.value = false,
-              horizontalPadding: 16,
-              verticalPadding: 5,
-              barHeight: 64,
-              minimizedBarHeight: 52,
-              // 選択中はブランドネイビーで主張、非選択は濃いグレー
-              selectedIconColor: AppTheme.primaryColor,
-              unselectedIconColor: Colors.black87,
-              selectedLabelColor: AppTheme.primaryColor,
-              unselectedLabelColor: Colors.black87,
-              selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
-              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
-              iconSize: 25,
-            ),
+            valueListenable: widget.collapsed,
+            builder: (context, isCollapsed, _) {
+              final n = items.length;
+              // 比率ベース配置: 縮小（幅変化）に追従しつつ、タブ切替時だけスライド。
+              // なぞり中は指の位置に追従する
+              final alignX = _dragging
+                  ? _alignForFrac(_dragFrac, n)
+                  : n <= 1
+                      ? 0.0
+                      : (widget.currentIndex / (n - 1)) * 2 - 1;
+              return AnimatedPadding(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+                // 縮小時は左右に絞って小さく見せる
+                padding: EdgeInsets.fromLTRB(
+                  isCollapsed ? 64 : 16, 4, isCollapsed ? 64 : 16, 6),
+                child: LayoutBuilder(builder: (context, box) {
+                  final width = box.maxWidth;
+                  // 指が触れている間は泡をガラス化する（iOS 26 と同じく、
+                  // 押した瞬間に膨らみ、離すとタブに吸い付いて戻る）
+                  return Listener(
+                    onPointerDown: (_) => _glassCtrl.forward(),
+                    onPointerUp: (_) => _glassCtrl.reverse(),
+                    onPointerCancel: (_) => _glassCtrl.reverse(),
+                    child: GestureDetector(
+                    // タップは各タブ（子）が処理。横ドラッグだけここで拾い、
+                    // 泡（カプセル）を指に追従させる
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragStart: (d) =>
+                        _onDragStart(d.localPosition.dx, width, n),
+                    onHorizontalDragUpdate: (d) =>
+                        _onDragUpdate(d.localPosition.dx, width, n),
+                    onHorizontalDragEnd: (_) => _onDragEnd(n),
+                    onHorizontalDragCancel: _onDragCancel,
+                    child: Stack(
+                  // 移動中に膨らむ選択カプセルをクリップしない
+                  clipBehavior: Clip.none,
+                  children: [
+                    // すりガラスのバー本体（背景のみ・タブは最前面のRowが描く）
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        // 高さ以上の角丸を指定して常に完全なカプセル形にする
+                        borderRadius: BorderRadius.circular(33),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.14),
+                            blurRadius: 24,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      // すりガラス（屈折）: 後ろのコンテンツをぼかして透かす
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(33),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOut,
+                            height: isCollapsed ? 52 : 66,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.85),
+                              borderRadius: BorderRadius.circular(33),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.55),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // タブ（アイコン＋ラベル）はガラスの下に置く。
+                    // 移動中の泡が上を通るとアイコン自体が拡大・歪んで見える
+                    // （iOS 26 と同じ「ガラス越しにアイコンの色が滲む」効果）
+                    Positioned.fill(
+                      // 泡が乗っているタブだけネイビーに点灯（通過中も追従）
+                      child: AnimatedBuilder(
+                        animation: _moveCtrl,
+                        builder: (context, _) {
+                          final bubbleTab = _bubbleTab(n);
+                          return Row(
+                            children: [
+                              for (var i = 0; i < items.length; i++)
+                                Expanded(
+                                  child: _NavItem(
+                                    data: items[i],
+                                    selected: i == bubbleTab,
+                                    collapsed: isCollapsed,
+                                    onTap: () =>
+                                        widget.onDestinationSelected(i),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    // 選択カプセル（最前面。タップは下のタブに通す）
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: AnimatedAlign(
+                        // なぞり中は指にピタッと追従。通常は勢い余って
+                        // 少し行き過ぎて戻る（液体の慣性）
+                        duration: Duration(milliseconds: _dragging ? 60 : 300),
+                        curve:
+                            _dragging ? Curves.linear : Curves.easeOutBack,
+                        alignment: Alignment(alignX, 0),
+                        child: FractionallySizedBox(
+                          widthFactor: 1 / n,
+                          heightFactor: 1,
+                          child: Padding(
+                            // 横は目一杯近くまで広げて横長のピルにする
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: isCollapsed ? 6 : 8),
+                            child: AnimatedBuilder(
+                              // タブ切替で _moveCtrl が0→1を再生。前半は泡
+                              // （ほぼ真円）に膨らんでガラス化し、着地後は
+                              // 減衰振動でぷるぷる震えながら元の薄いピルに戻る
+                              animation: Listenable.merge(
+                                  [_moveCtrl, _glassCtrl]),
+                              builder: (context, _) {
+                                final t = _moveCtrl.value;
+                                // 前半55%で膨らんで戻る山なりカーブ
+                                final pulse = math.sin(
+                                    math.pi * math.min(t / 0.55, 1.0));
+                                // 着地後のジェリー振動（減衰するサイン波）
+                                final wobble = math.sin(math.pi * 6 * t) *
+                                    math.exp(-4 * t);
+                                // なぞり中のガラス化（_glassCtrl）と
+                                // タブ切替パルスの強い方を採用
+                                final glass =
+                                    math.max(pulse, _glassCtrl.value);
+                                // 移動中はバーから上下にはみ出す横長の
+                                // 泡にする（iOS 26 の実測比: 幅≒1.5タブ・
+                                // 高さ≒バー+15%）。wobble は縦横逆位相＝
+                                // 体積が保存されたような「ぷるぷる」
+                                return Transform.scale(
+                                  scaleX:
+                                      1 + 0.55 * glass + 0.06 * wobble,
+                                  scaleY:
+                                      1 + 0.50 * glass - 0.06 * wobble,
+                                  child: _LiquidCapsule(glass: glass),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        ),
+                      ),
+                    ),
+                  ],
+                    ),
+                  ));
+                }),
+              );
+            },
           ),
         );
       },
     );
   }
+}
 
-  static Widget _withBadge(Widget icon, int count) {
-    if (count <= 0) return icon;
-    return Badge(
-      label: Text('$count', style: const TextStyle(fontSize: 10, color: Colors.white)),
-      backgroundColor: AppTheme.error,
-      child: icon,
+/// 選択カプセル。色を付けない「透明なガラス」— 静止時はごく薄いニュートラルの
+/// ピル、タブ間を移動する間だけ「液体ガラス」になる（iOS 26 の挙動の近似）:
+/// RawMagnifier で下のコンテンツ（アイコン）を本当に屈折拡大し、縁の白い光・
+/// 上面の照り・足元の影をまとって膨らみながら滑り、着地すると戻る。色は付けない。
+/// 選択の主張はカプセルの色ではなくアイコン（ネイビー）が担う。
+/// ネイティブ（iOS/Android）の泡は liquid_glass_widgets のガラスシェーダーで描き、
+/// iOS 26 と同じく縁の屈折・色収差（虹色のにじみ）・光沢まで出す。
+/// Web はシェーダーの品質が出ないため従来の RawMagnifier（BackdropFilter の
+/// 行列変換）による近似のまま。
+class _LiquidCapsule extends StatelessWidget {
+  const _LiquidCapsule({required this.glass});
+
+  /// 0 = 静止（透明なガラスのピル）〜 1 = 移動中のピーク（ガラスの水滴）
+  final double glass;
+
+  // ネイティブの泡のガラス設定。中身はくっきり（blur 0）、
+  // 縁で強く曲げて虹色ににじませる
+  static const _bubbleSettings = LiquidGlassSettings(
+    thickness: 30,
+    refractiveIndex: 1.25,
+    chromaticAberration: 0.25,
+    blur: 0,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final fill = DecoratedBox(
+      decoration: BoxDecoration(
+        // 静止時: 輪郭が分かる程度のごく薄いグレー。
+        // 移動中はフェードアウトして完全に無色のガラスにする
+        // （グレーを残すと泡全体が灰色がかって見える）
+        color: Colors.black.withValues(alpha: 0.06 * (1 - glass)),
+        borderRadius: BorderRadius.circular(25),
+      ),
+      // 上面の白い反射（ガラスの照り）— ごく控えめ。強くすると霧の玉になる
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(25),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: 0.18 * glass),
+              Colors.white.withValues(alpha: 0.0),
+            ],
+            stops: const [0.0, 0.5],
+          ),
+        ),
+      ),
     );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        // 高さの半分以上の角丸で常に完全なカプセル形
+        borderRadius: BorderRadius.circular(26),
+        // 移動中だけ縁が白く光る（色は付けない・静止時は透明）
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: 0.90 * glass),
+            Colors.white.withValues(alpha: 0.25 * glass),
+            Colors.white.withValues(alpha: 0.12 * glass),
+            Colors.white.withValues(alpha: 0.28 * glass),
+            Colors.white.withValues(alpha: 0.70 * glass),
+          ],
+          stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
+        ),
+        // 影は付けない: 半透明の泡は影が中身から透けて全体が
+        // 灰色がかって見えるため（輪郭は縁の白いハイライトが担う）
+      ),
+      child: Padding(
+        // 縁の線の太さ（グラデーションが見える幅）
+        padding: const EdgeInsets.all(1.4),
+        // 静止時はレンズ類を一切組み込まない（コスト削減＋濁り防止）
+        child: glass < 0.01
+            ? fill
+            : !kIsWeb
+                ? AdaptiveGlass(
+                    shape: const LiquidRoundedRectangle(borderRadius: 999),
+                    settings: _bubbleSettings.copyWith(visibility: glass),
+                    quality: GlassQuality.premium,
+                    child: const SizedBox.expand(),
+                  )
+                : LayoutBuilder(builder: (context, c) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(25),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // 本物のレンズ: 泡の下のコンテンツ（アイコン）を屈折拡大する
+                      // （RawMagnifier = BackdropFilter の行列変換。シェーダー不要）
+                      RawMagnifier(
+                        size: Size(c.maxWidth, c.maxHeight),
+                        magnificationScale: 1 + 0.35 * glass,
+                        decoration: const MagnifierDecoration(
+                          shape: StadiumBorder(),
+                        ),
+                      ),
+                      // ごくわずかな曇りだけ乗せる。強いぼかしは拡大した
+                      // アイコンを消して「霧の玉」になるので厳禁
+                      BackdropFilter(
+                        filter: ImageFilter.blur(
+                            sigmaX: 1.5 * glass, sigmaY: 1.5 * glass),
+                        child: fill,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+      ),
+    );
+  }
+}
+
+/// 浮島型ボトムナビのタブ定義
+class _NavItemData {
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+  final int badge;
+  const _NavItemData(this.icon, this.activeIcon, this.label, {this.badge = 0});
+}
+
+/// 1タブ分。選択時は角丸カプセルで強調する。
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.data,
+    required this.selected,
+    required this.collapsed,
+    required this.onTap,
+  });
+
+  final _NavItemData data;
+  final bool selected;
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    // 選択中はブランドネイビーで主張、非選択は濃いグレー
+    final color = selected ? AppTheme.primaryColor : Colors.black87;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        margin: EdgeInsets.symmetric(horizontal: 5, vertical: collapsed ? 6 : 9),
+        // 選択カプセルはスライドする背面側（_LiquidCapsule）が描くためここは透明
+        decoration: const BoxDecoration(),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _icon(color),
+            // 縮小時はラベルを畳んでアイコンだけにする
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: collapsed
+                  ? const SizedBox(width: double.infinity)
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          data.label,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 11,
+                            height: 1.0,
+                            color: color,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _icon(Color color) {
+    final iconWidget = Icon(selected ? data.activeIcon : data.icon, size: 25, color: color);
+    if (data.badge > 0) {
+      return Badge(
+        label: Text('${data.badge}', style: const TextStyle(fontSize: 10, color: Colors.white)),
+        backgroundColor: AppTheme.error,
+        child: iconWidget,
+      );
+    }
+    return iconWidget;
   }
 }
