@@ -1,12 +1,13 @@
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../../config/app_theme.dart';
 import '../../widgets/connectivity_banner.dart';
 import '../../widgets/ban_guard.dart';
@@ -344,7 +345,13 @@ class _BottomNavState extends State<_BottomNav>
                   isCollapsed ? 64 : 16, 4, isCollapsed ? 64 : 16, 6),
                 child: LayoutBuilder(builder: (context, box) {
                   final width = box.maxWidth;
-                  return GestureDetector(
+                  // 指が触れている間は泡をガラス化する（iOS 26 と同じく、
+                  // 押した瞬間に膨らみ、離すとタブに吸い付いて戻る）
+                  return Listener(
+                    onPointerDown: (_) => _glassCtrl.forward(),
+                    onPointerUp: (_) => _glassCtrl.reverse(),
+                    onPointerCancel: (_) => _glassCtrl.reverse(),
+                    child: GestureDetector(
                     // タップは各タブ（子）が処理。横ドラッグだけここで拾い、
                     // 泡（カプセル）を指に追従させる
                     behavior: HitTestBehavior.translucent,
@@ -454,14 +461,15 @@ class _BottomNavState extends State<_BottomNav>
                                 // タブ切替パルスの強い方を採用
                                 final glass =
                                     math.max(pulse, _glassCtrl.value);
-                                // 縦を大きく伸ばして移動中はほぼ真円の
-                                // 泡にする。wobble は縦横逆位相＝体積が
-                                // 保存されたような「ぷるぷる」
+                                // 移動中はバーから上下にはみ出す横長の
+                                // 泡にする（iOS 26 の実測比: 幅≒1.5タブ・
+                                // 高さ≒バー+15%）。wobble は縦横逆位相＝
+                                // 体積が保存されたような「ぷるぷる」
                                 return Transform.scale(
                                   scaleX:
                                       1 + 0.55 * glass + 0.06 * wobble,
                                   scaleY:
-                                      1 + 0.90 * glass - 0.06 * wobble,
+                                      1 + 0.50 * glass - 0.06 * wobble,
                                   child: _LiquidCapsule(glass: glass),
                                 );
                               },
@@ -473,7 +481,7 @@ class _BottomNavState extends State<_BottomNav>
                     ),
                   ],
                     ),
-                  );
+                  ));
                 }),
               );
             },
@@ -489,12 +497,24 @@ class _BottomNavState extends State<_BottomNav>
 /// RawMagnifier で下のコンテンツ（アイコン）を本当に屈折拡大し、縁の白い光・
 /// 上面の照り・足元の影をまとって膨らみながら滑り、着地すると戻る。色は付けない。
 /// 選択の主張はカプセルの色ではなくアイコン（ネイビー）が担う。
-/// RawMagnifier は BackdropFilter の行列変換なのでシェーダー不要＝Webでも動く。
+/// ネイティブ（iOS/Android）の泡は liquid_glass_widgets のガラスシェーダーで描き、
+/// iOS 26 と同じく縁の屈折・色収差（虹色のにじみ）・光沢まで出す。
+/// Web はシェーダーの品質が出ないため従来の RawMagnifier（BackdropFilter の
+/// 行列変換）による近似のまま。
 class _LiquidCapsule extends StatelessWidget {
   const _LiquidCapsule({required this.glass});
 
   /// 0 = 静止（透明なガラスのピル）〜 1 = 移動中のピーク（ガラスの水滴）
   final double glass;
+
+  // ネイティブの泡のガラス設定。中身はくっきり（blur 0）、
+  // 縁で強く曲げて虹色ににじませる
+  static const _bubbleSettings = LiquidGlassSettings(
+    thickness: 30,
+    refractiveIndex: 1.25,
+    chromaticAberration: 0.25,
+    blur: 0,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -548,7 +568,14 @@ class _LiquidCapsule extends StatelessWidget {
         // 静止時はレンズ類を一切組み込まない（コスト削減＋濁り防止）
         child: glass < 0.01
             ? fill
-            : LayoutBuilder(builder: (context, c) {
+            : !kIsWeb
+                ? AdaptiveGlass(
+                    shape: const LiquidRoundedRectangle(borderRadius: 999),
+                    settings: _bubbleSettings.copyWith(visibility: glass),
+                    quality: GlassQuality.premium,
+                    child: const SizedBox.expand(),
+                  )
+                : LayoutBuilder(builder: (context, c) {
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(25),
                   child: Stack(
