@@ -3566,6 +3566,9 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
     } catch (e) { /* noop */ }
   }
 
+  // 回答した本人の招待通知は「対応済み」にする
+  await markEntryInviteNotifications(db, [uid], draftId, { resolved: true });
+
   return { finalized: result.finalized, declined: !!result.declined, memberAdd: !!result.memberAdd };
 });
 
@@ -3729,6 +3732,9 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
     await followOrganizerForEntrants(db, tournamentId, [targetUid]);
   }
 
+  // 代理承認された本人の招待通知も「対応済み」にする
+  await markEntryInviteNotifications(db, [targetUid], draftId, { resolved: true });
+
   return { approved: true, finalized: !!result.finalized, teamName: result.teamName };
 });
 
@@ -3887,17 +3893,31 @@ exports.updateEntryMembers = functions.https.onCall(async (data, context) => {
 });
 
 // 承認待ちエントリー（ドラフト）の取り消し（キャプテン本人 or 主催者）
-// 取り消された承認待ちエントリーの「招待されました」通知に canceled フラグを付ける。
-// 通知一覧で「取り消し済み」と表示し、タップしても承認/辞退ダイアログを出さないため。
-async function markEntryInviteNotificationsCanceled(db, uids, draftId) {
+// 承認待ちエントリーの「招待されました」通知（entry_invite）に状態フラグを付ける。
+// 通知一覧で「取り消し済み」「対応済み」と表示し、タップしても承認/辞退ダイアログを出さないため。
+//   fields = { canceled: true } … エントリーが取り消された／メンバーから外された
+//   fields = { resolved: true } … 本人が回答済み、またはエントリーが成立した
+async function markEntryInviteNotifications(db, uids, draftId, fields) {
   await Promise.all(uids.map(async (u) => {
     try {
       const qs = await db.collection("users").doc(u).collection("notifications")
         .where("type", "==", "entry_invite").where("draftId", "==", draftId).get();
-      await Promise.all(qs.docs.map((d) => d.ref.update({ canceled: true })));
-    } catch (e) { console.error("[markEntryInviteNotificationsCanceled] failed:", u, e); }
+      await Promise.all(qs.docs.map((d) => d.ref.update(fields)));
+    } catch (e) { console.error("[markEntryInviteNotifications] failed:", u, e); }
   }));
 }
+
+// 承認待ちドラフトが消えた（成立・取り消し・辞退による自動成立など、どの経路でも）
+// → 招待されていた全員の招待通知を「対応済み」にする。取り消しの場合は cancelEntryDraft 側で
+//   canceled も付けており、アプリは canceled を優先して「取り消し済み」と表示する。
+exports.onEntryDraftDeleted = functions.firestore
+  .document("tournaments/{tournamentId}/entryDrafts/{draftId}")
+  .onDelete(async (snap, context) => {
+    const draft = snap.data() || {};
+    const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+    await markEntryInviteNotifications(admin.firestore(), invited, context.params.draftId, { resolved: true });
+    return null;
+  });
 
 exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
@@ -3942,7 +3962,7 @@ exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
       });
     } catch (e) { console.error("[cancelEntryDraft] notify failed:", u, e); }
   }));
-  await markEntryInviteNotificationsCanceled(db, invited, draftId);
+  await markEntryInviteNotifications(db, invited, draftId, { canceled: true });
   return { canceled: true };
 });
 
@@ -4069,7 +4089,7 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
   }
 
   // 外されたメンバーの「招待されました」通知を取り消し済みにする
-  await markEntryInviteNotificationsCanceled(db, [targetUid], draftId);
+  await markEntryInviteNotifications(db, [targetUid], draftId, { canceled: true });
 
   return { removed: true, teamName: result.teamName, targetName: result.targetName, finalized: !!result.finalized };
 });
