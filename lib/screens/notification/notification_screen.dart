@@ -122,6 +122,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     // 大会エントリーの招待 → 承認 / 辞退ダイアログ
     if (type == 'entry_invite') {
+      // 取り消し済みの招待は承認/辞退できないので案内だけ出す
+      if (data['canceled'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('この招待は取り消されました'),
+          backgroundColor: AppTheme.textSecondary,
+        ));
+        return;
+      }
       await _showEntryInviteDialog(data);
       return;
     }
@@ -218,6 +226,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderAvatar = data['senderAvatar'] ?? '';
     final message = data['message'] ?? '';
     final bool isRead = data['read'] ?? true;
+    // エントリーが取り消された後の「招待されました」通知（灰色で表示）
+    final bool isCanceledInvite = type == 'entry_invite' && data['canceled'] == true;
     final createdAt = data['createdAt'] as Timestamp?;
 
     IconData icon;
@@ -283,7 +293,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         color: isRead
             ? Colors.transparent
             : AppTheme.primaryColor.withValues(alpha: 0.04),
-        child: ListTile(
+        child: Opacity(
+          opacity: isCanceledInvite ? 0.5 : 1,
+          child: ListTile(
           onTap: () => _onNotificationTap(data),
           leading: Stack(
             children: [
@@ -332,14 +344,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              _formatTime(createdAt),
-              style: const TextStyle(
-                  fontSize: 12, color: AppTheme.textSecondary),
-            ),
+            child: Row(children: [
+              Text(
+                _formatTime(createdAt),
+                style: const TextStyle(
+                    fontSize: 12, color: AppTheme.textSecondary),
+              ),
+              if (isCanceledInvite) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('取り消し済み',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textSecondary, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ]),
           ),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        ),
         ),
       ),
     );

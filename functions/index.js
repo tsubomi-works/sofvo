@@ -3887,6 +3887,18 @@ exports.updateEntryMembers = functions.https.onCall(async (data, context) => {
 });
 
 // 承認待ちエントリー（ドラフト）の取り消し（キャプテン本人 or 主催者）
+// 取り消された承認待ちエントリーの「招待されました」通知に canceled フラグを付ける。
+// 通知一覧で「取り消し済み」と表示し、タップしても承認/辞退ダイアログを出さないため。
+async function markEntryInviteNotificationsCanceled(db, uids, draftId) {
+  await Promise.all(uids.map(async (u) => {
+    try {
+      const qs = await db.collection("users").doc(u).collection("notifications")
+        .where("type", "==", "entry_invite").where("draftId", "==", draftId).get();
+      await Promise.all(qs.docs.map((d) => d.ref.update({ canceled: true })));
+    } catch (e) { console.error("[markEntryInviteNotificationsCanceled] failed:", u, e); }
+  }));
+}
+
 exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
   const uid = context.auth.uid;
@@ -3930,6 +3942,7 @@ exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
       });
     } catch (e) { console.error("[cancelEntryDraft] notify failed:", u, e); }
   }));
+  await markEntryInviteNotificationsCanceled(db, invited, draftId);
   return { canceled: true };
 });
 
@@ -4054,6 +4067,9 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
       } catch (e) { console.error("[removeEntryDraftMember] notify failed:", e); }
     }));
   }
+
+  // 外されたメンバーの「招待されました」通知を取り消し済みにする
+  await markEntryInviteNotificationsCanceled(db, [targetUid], draftId);
 
   return { removed: true, teamName: result.teamName, targetName: result.targetName, finalized: !!result.finalized };
 });
