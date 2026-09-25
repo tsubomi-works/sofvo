@@ -33,7 +33,9 @@ on:
 jobs:
   ios:
     runs-on: macos-26
-    timeout-minutes: 90
+    # ci_release は Apple のビルド処理待ち（混雑時 1 時間超）を含むため長めに取る
+    # （2026-09-25: 処理待ちが 48 分続き 90 分で打ち切られた）
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
