@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'services/bookmark_notification_service.dart';
 import 'services/push_notification_service.dart';
@@ -102,7 +103,14 @@ void main() async {
   PushNotificationService.navigatorKey = navigatorKey;
   PushNotificationService.scaffoldMessengerKey = scaffoldMessengerKey;
 
-  runApp(const SofvoApp());
+  // ボトムナビの Liquid Glass シェーダーを先読み（初回表示のちらつき防止）
+  await LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
+
+  runApp(LiquidGlassWidgets.wrap(
+    child: const SofvoApp(),
+    // アプリはライトテーマ固定。端末のダークモードでガラスの影や縁が消えないようにする
+    brightnessResolver: (_) => Brightness.light,
+  ));
 }
 
 class SofvoApp extends StatelessWidget {
