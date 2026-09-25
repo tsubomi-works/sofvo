@@ -4893,7 +4893,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
               Row(children: [
                 const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
                 const SizedBox(width: 6),
-                Text('承認待ち ${docs.length}チーム（主催者のみ表示）',
+                Text('承認待ち ${docs.length}チーム（運営者のみ表示）',
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.accentColor)),
               ]),
               const SizedBox(height: 8),
@@ -4954,8 +4954,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final canProxyApprove = _isAdmin ||
         (myUid.isNotEmpty && myUid == (widget.tournament['organizerId'] ?? '').toString());
-    // エントリーの取り消しはサーバー側（cancelEntryDraft）でキャプテン・主催者・管理者のみ許可。
+    // エントリーの取り消し（cancelEntryDraft）と再通知（resendEntryInviteNotification）は
+    // サーバー側でキャプテン・主催者・管理者のみ許可。編集者には出さない。
     final canCancel = canProxyApprove || (myUid.isNotEmpty && myUid == (data['leaderUid'] ?? '').toString());
+    final canResend = canCancel;
 
     showModalBottomSheet(
       context: context,
@@ -5010,7 +5012,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                 actions: st != 'pending'
                     ? const []
                     : [
-                        _draftActionChip(
+                        if (canResend)
+                          _draftActionChip(
                           icon: Icons.notifications_active_outlined,
                           label: '再通知',
                           color: AppTheme.accentColor,
