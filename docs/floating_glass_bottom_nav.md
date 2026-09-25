@@ -5,6 +5,11 @@ Sofvo で実装した「Instagram 風・浮島型すりガラス・スクロー�
 
 実体（Sofvo 内）: `lib/screens/home/main_tab_screen.dart`
 
+> **2026-09-25 更新**: Sofvo 本体のボトムナビは、iOS 26 の Liquid Glass（縁の屈折・色収差・光沢）に寄せるため
+> pub パッケージ **`liquid_glass_widgets`** の `GlassTabBar.minimizable` に置き換えた（下スクロールで選択タブの丸に縮む）。
+> 以下の自作版（`BackdropFilter` ＋ `RawMagnifier`）は、パッケージを入れたくない別アプリ向けの汎用版として残している。
+> ハマりどころ（`extendBody:true`・各画面 `SafeArea(bottom:false)`・リスト下パディング・FAB持ち上げ・ページ背景白）はパッケージ版でも同じ。
+
 ---
 
 ## 仕様（デザインの狙い）
