@@ -4969,11 +4969,56 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             Center(child: Container(width: 40, height: 4,
                 decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
             const SizedBox(height: 16),
-            Text(isMemberAdd ? '$teamName（追加メンバー承認待ち）' : teamName,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Row(children: [
+              const Icon(Icons.groups_outlined, size: 22, color: AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(isMemberAdd ? '$teamName（追加メンバー承認待ち）' : teamName,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+            ]),
             const SizedBox(height: 4),
-            Text('キャプテン: $leaderName', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            Row(children: [
+              const Icon(Icons.star_outline, size: 15, color: AppTheme.accentColor),
+              const SizedBox(width: 4),
+              Text('キャプテン: $leaderName', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            ]),
             const SizedBox(height: 16),
+            // 承認の進み具合（何人承認したらエントリー成立かが一目でわかるように）
+            Builder(builder: (_) {
+              final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
+              final total = invited.length;
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.accentColor.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text('全員が承認するとエントリー成立',
+                          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                    ),
+                    Text('$approvedCount / $total 人',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                  ]),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: total == 0 ? 0 : approvedCount / total,
+                      minHeight: 6,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: const AlwaysStoppedAnimation(AppTheme.success),
+                    ),
+                  ),
+                ]),
+              );
+            }),
+            const SizedBox(height: 12),
             ...invited.map((u) {
               final nm = (memberNames[u] ?? '?').toString();
               final st = (approvals[u] ?? 'pending').toString();
@@ -4982,44 +5027,60 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                   ? AppTheme.success
                   : st == 'declined'
                       ? AppTheme.error
-                      : AppTheme.textHint;
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => UserProfileScreen(userId: u))),
-                      child: Text(nm,
-                          style: const TextStyle(fontSize: 14, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
-                    ),
-                  ),
-                  Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
-                  if (st == 'pending') ...[
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _resendEntryInvite(draftId, u, nm);
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(Icons.notifications_active_outlined, size: 16, color: AppTheme.accentColor),
+                      : AppTheme.textSecondary;
+              final icon = st == 'approved'
+                  ? Icons.check_circle
+                  : st == 'declined'
+                      ? Icons.cancel
+                      : Icons.schedule;
+              return Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Icon(icon, size: 20, color: st == 'pending' ? AppTheme.textHint : c),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => Navigator.push(context, MaterialPageRoute(
+                            builder: (_) => UserProfileScreen(userId: u))),
+                        child: Text(nm,
+                            style: const TextStyle(fontSize: 15, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
                       ),
                     ),
-                    InkWell(
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _adminApproveEntryDraftMember(draftId, u, nm);
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(Icons.verified_outlined, size: 16, color: AppTheme.primaryColor),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: c.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
                       ),
+                      child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
                     ),
-                  ],
+                  ]),
+                  if (st == 'pending')
+                    Padding(
+                      padding: const EdgeInsets.only(left: 30, top: 6),
+                      child: Wrap(spacing: 8, children: [
+                        _draftActionChip(
+                          icon: Icons.notifications_active_outlined,
+                          label: '再通知',
+                          color: AppTheme.accentColor,
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _resendEntryInvite(draftId, u, nm);
+                          },
+                        ),
+                        _draftActionChip(
+                          icon: Icons.verified_outlined,
+                          label: '代理承認',
+                          color: AppTheme.primaryColor,
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _adminApproveEntryDraftMember(draftId, u, nm);
+                          },
+                        ),
+                      ]),
+                    ),
                 ]),
               );
             }),
@@ -5034,12 +5095,41 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                 },
                 style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
-                child: const Text('招待を取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                  Icon(Icons.delete_outline, size: 14, color: AppTheme.textHint),
+                  SizedBox(width: 3),
+                  Text('招待を取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                ]),
               ),
             ),
           ],
         ),
         ),
+      ),
+    );
+  }
+
+  /// 承認待ちメンバーに対する操作（再通知・代理承認）の小さなボタン
+  Widget _draftActionChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+        ]),
       ),
     );
   }
