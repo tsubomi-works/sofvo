@@ -4948,6 +4948,14 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     final invited = List<String>.from((data['invitedUids'] as List<dynamic>?) ?? []);
     final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
     final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+    final memberAvatars = Map<String, dynamic>.from(data['memberAvatars'] as Map? ?? {});
+    // 代理承認はサーバー側（adminApproveEntryDraftMember）でキャプテン・主催者・管理者のみ許可。
+    // 編集者などには押しても失敗するボタンを出さない。
+    final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final canProxyApprove = _isAdmin ||
+        (myUid.isNotEmpty &&
+            (myUid == (data['leaderUid'] ?? '').toString() ||
+                myUid == (widget.tournament['organizerId'] ?? '').toString()));
 
     showModalBottomSheet(
       context: context,
@@ -4987,7 +4995,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             // 承認の進み具合（何人承認したらエントリー成立かが一目でわかるように）
             Builder(builder: (_) {
               final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
-              final total = invited.length;
+              // 辞退した人は分母から除外（一覧カードの「承認 x/y」と揃える）
+              final total = invited.where((u) => approvals[u] != 'declined').length;
               return Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -5038,8 +5047,30 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                 decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
-                    Icon(icon, size: 20, color: st == 'pending' ? AppTheme.textHint : c),
-                    const SizedBox(width: 10),
+                    // プロフィールアイコン＋右下に状態バッジ
+                    Stack(clipBehavior: Clip.none, children: [
+                      Builder(builder: (_) {
+                        final avatarUrl = (memberAvatars[u] ?? '').toString();
+                        return CircleAvatar(
+                          radius: 18,
+                          backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+                          backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+                          child: avatarUrl.isNotEmpty
+                              ? null
+                              : Text(nm.isNotEmpty ? nm[0] : '?',
+                                  style: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+                        );
+                      }),
+                      Positioned(
+                        right: -3,
+                        bottom: -3,
+                        child: Container(
+                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                          child: Icon(icon, size: 16, color: st == 'pending' ? AppTheme.textHint : c),
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: GestureDetector(
                         onTap: () => Navigator.push(context, MaterialPageRoute(
@@ -5059,7 +5090,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                   ]),
                   if (st == 'pending')
                     Padding(
-                      padding: const EdgeInsets.only(left: 30, top: 6),
+                      padding: const EdgeInsets.only(left: 48, top: 6),
                       child: Wrap(spacing: 8, children: [
                         _draftActionChip(
                           icon: Icons.notifications_active_outlined,
@@ -5070,6 +5101,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                             _resendEntryInvite(draftId, u, nm);
                           },
                         ),
+                        if (canProxyApprove)
                         _draftActionChip(
                           icon: Icons.verified_outlined,
                           label: '代理承認',
