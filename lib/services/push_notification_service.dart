@@ -239,6 +239,11 @@ class PushNotificationService {
       case 'deadline_approaching':
       case 'tournament_created':
       case 'slots_low':
+      // 大会エントリーの招待・成立・辞退・取り消し → 大会詳細（招待カードで承認/辞退できる）
+      case 'entry_invite':
+      case 'entry_confirmed':
+      case 'entry_declined':
+      case 'entry_canceled':
         final tournamentId = data['tournamentId'] as String? ?? targetId;
         if (tournamentId != null) _navigateToTournament(navigator, tournamentId);
         break;
