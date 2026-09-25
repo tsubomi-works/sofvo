@@ -4991,105 +4991,23 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             ]),
             const SizedBox(height: 16),
             // 承認の進み具合（何人承認したらエントリー成立かが一目でわかるように）
-            Builder(builder: (_) {
-              final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
+            _draftProgressBox(
+              approvedCount: invited.where((u) => approvals[u] == 'approved').length,
               // 辞退した人は分母から除外（一覧カードの「承認 x/y」と揃える）
-              final total = invited.where((u) => approvals[u] != 'declined').length;
-              return Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.accentColor.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text('全員が承認するとエントリー成立',
-                          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-                    ),
-                    Text('$approvedCount / $total 人',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-                  ]),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: total == 0 ? 0 : approvedCount / total,
-                      minHeight: 6,
-                      backgroundColor: Colors.grey[200],
-                      valueColor: const AlwaysStoppedAnimation(AppTheme.success),
-                    ),
-                  ),
-                ]),
-              );
-            }),
+              totalCount: invited.where((u) => approvals[u] != 'declined').length,
+            ),
             const SizedBox(height: 12),
             ...invited.map((u) {
               final nm = (memberNames[u] ?? '?').toString();
               final st = (approvals[u] ?? 'pending').toString();
-              final label = st == 'approved' ? '承認済み' : st == 'declined' ? '辞退' : '承認待ち';
-              final c = st == 'approved'
-                  ? AppTheme.success
-                  : st == 'declined'
-                      ? AppTheme.error
-                      : AppTheme.textSecondary;
-              final icon = st == 'approved'
-                  ? Icons.check_circle
-                  : st == 'declined'
-                      ? Icons.cancel
-                      : Icons.schedule;
-              return Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    // プロフィールアイコン＋右下に状態バッジ
-                    Stack(clipBehavior: Clip.none, children: [
-                      Builder(builder: (_) {
-                        final avatarUrl = (memberAvatars[u] ?? '').toString();
-                        return CircleAvatar(
-                          radius: 18,
-                          backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
-                          backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
-                          child: avatarUrl.isNotEmpty
-                              ? null
-                              : Text(nm.isNotEmpty ? nm[0] : '?',
-                                  style: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-                        );
-                      }),
-                      Positioned(
-                        right: -3,
-                        bottom: -3,
-                        child: Container(
-                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                          child: Icon(icon, size: 16, color: st == 'pending' ? AppTheme.textHint : c),
-                        ),
-                      ),
-                    ]),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => UserProfileScreen(userId: u))),
-                        child: Text(nm,
-                            style: const TextStyle(fontSize: 15, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: c.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
-                    ),
-                  ]),
-                  if (st == 'pending')
-                    Padding(
-                      padding: const EdgeInsets.only(left: 48, top: 6),
-                      child: Wrap(spacing: 8, children: [
+              return _draftMemberRow(
+                uid: u,
+                name: nm,
+                avatarUrl: (memberAvatars[u] ?? '').toString(),
+                status: st,
+                actions: st != 'pending'
+                    ? const []
+                    : [
                         _draftActionChip(
                           icon: Icons.notifications_active_outlined,
                           label: '再通知',
@@ -5100,18 +5018,16 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           },
                         ),
                         if (canProxyApprove)
-                        _draftActionChip(
-                          icon: Icons.verified_outlined,
-                          label: '代理承認',
-                          color: AppTheme.primaryColor,
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            _adminApproveEntryDraftMember(draftId, u, nm);
-                          },
-                        ),
-                      ]),
-                    ),
-                ]),
+                          _draftActionChip(
+                            icon: Icons.verified_outlined,
+                            label: '代理承認',
+                            color: AppTheme.primaryColor,
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _adminApproveEntryDraftMember(draftId, u, nm);
+                            },
+                          ),
+                      ],
               );
             }),
             const SizedBox(height: 16),
@@ -5136,6 +5052,120 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         ),
         ),
       ),
+    );
+  }
+
+  /// 承認待ちエントリーの進捗（x / y 人＋バー）。主催者シートとキャプテンのカードで共通。
+  Widget _draftProgressBox({required int approvedCount, required int totalCount}) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.accentColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text('全員が承認するとエントリー成立',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ),
+          Text('$approvedCount / $totalCount 人',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+        ]),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: totalCount == 0 ? 0 : approvedCount / totalCount,
+            minHeight: 6,
+            backgroundColor: Colors.grey[200],
+            valueColor: const AlwaysStoppedAnimation(AppTheme.success),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  /// 承認待ちエントリーのメンバー1行（プロフィール写真＋状態バッジ＋状態ラベル＋操作ボタン）。
+  /// [pendingLabel] を渡すと承認待ちの表示を差し替えられる（キャプテン向けの「未読」「既読・未回答」など）。
+  Widget _draftMemberRow({
+    required String uid,
+    required String name,
+    required String avatarUrl,
+    required String status,
+    String? pendingLabel,
+    Color? pendingColor,
+    List<Widget> actions = const [],
+    bool showDivider = true,
+  }) {
+    final label = status == 'approved'
+        ? '承認済み'
+        : status == 'declined'
+            ? '辞退'
+            : (pendingLabel ?? '承認待ち');
+    final c = status == 'approved'
+        ? AppTheme.success
+        : status == 'declined'
+            ? AppTheme.error
+            : (pendingColor ?? AppTheme.textSecondary);
+    final icon = status == 'approved'
+        ? Icons.check_circle
+        : status == 'declined'
+            ? Icons.cancel
+            : Icons.schedule;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: showDivider
+          ? BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!)))
+          : null,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          // プロフィールアイコン＋右下に状態バッジ
+          Stack(clipBehavior: Clip.none, children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+              backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+              child: avatarUrl.isNotEmpty
+                  ? null
+                  : Text(name.isNotEmpty ? name[0] : '?',
+                      style: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+            ),
+            Positioned(
+              right: -3,
+              bottom: -3,
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                child: Icon(icon, size: 16, color: status == 'pending' ? AppTheme.textHint : c),
+              ),
+            ),
+          ]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => UserProfileScreen(userId: uid))),
+              child: Text(name,
+                  style: const TextStyle(fontSize: 15, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: c.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+          ),
+        ]),
+        if (actions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 48, top: 6),
+            child: Wrap(spacing: 8, runSpacing: 6, children: actions),
+          ),
+      ]),
     );
   }
 
@@ -6463,6 +6493,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
             final seenAt = Map<String, dynamic>.from(data['seenAt'] as Map? ?? {});
             final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+            final memberAvatars = Map<String, dynamic>.from(data['memberAvatars'] as Map? ?? {});
             // 辞退した人は分母から除外する（辞退しても残りの有効メンバーだけで自動成立するため）
             final activeCount = invited.where((u) => approvals[u] != 'declined').length;
             final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
@@ -6497,54 +6528,43 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                   ]),
                   const SizedBox(height: 8),
                   if (isLeader) ...[
-                    // キャプテン視点：未承認メンバーの一覧＋取り消し
-                    ...invited.where((u) => u != uid).map((u) {
-                      final st = (approvals[u] ?? 'pending').toString();
-                      final nm = (memberNames[u] ?? '?').toString();
-                      final seen = seenAt[u] != null;
-                      final label = st == 'approved'
-                          ? '承認済み'
-                          : st == 'declined'
-                              ? '辞退'
-                              : (seen ? '既読・未回答' : '未読');
-                      final c = st == 'approved'
-                          ? AppTheme.success
-                          : st == 'declined'
-                              ? AppTheme.error
-                              : (seen ? AppTheme.accentColor : AppTheme.textHint);
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 3),
-                        child: Row(children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(
-                                  builder: (_) => UserProfileScreen(userId: u))),
-                              child: Text(nm,
-                                  style: const TextStyle(fontSize: 13, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
-                            ),
-                          ),
-                          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
-                          if (st == 'pending') ...[
-                            InkWell(
-                              onTap: () => _resendEntryInvite(d.id, u, nm),
-                              borderRadius: BorderRadius.circular(12),
-                              child: const Padding(
-                                padding: EdgeInsets.only(left: 4, top: 2, bottom: 2, right: 2),
-                                child: Icon(Icons.notifications_active_outlined, size: 15, color: AppTheme.accentColor),
+                    // キャプテン視点：主催者向けシートと同じ見た目（写真・状態バッジ・進捗バー）
+                    _draftProgressBox(approvedCount: approvedCount, totalCount: activeCount),
+                    const SizedBox(height: 4),
+                    ...() {
+                      final others = invited.where((u) => u != uid).toList();
+                      return others.asMap().entries.map((e) {
+                        final u = e.value;
+                        final st = (approvals[u] ?? 'pending').toString();
+                        final nm = (memberNames[u] ?? '?').toString();
+                        final seen = seenAt[u] != null;
+                        return _draftMemberRow(
+                          uid: u,
+                          name: nm,
+                          avatarUrl: (memberAvatars[u] ?? '').toString(),
+                          status: st,
+                          // キャプテンには相手が招待を見たかどうかも出す
+                          pendingLabel: seen ? '既読・未回答' : '未読',
+                          pendingColor: seen ? AppTheme.accentColor : AppTheme.textSecondary,
+                          showDivider: e.key != others.length - 1,
+                          actions: [
+                            if (st == 'pending')
+                              _draftActionChip(
+                                icon: Icons.notifications_active_outlined,
+                                label: '再通知',
+                                color: AppTheme.accentColor,
+                                onTap: () => _resendEntryInvite(d.id, u, nm),
                               ),
+                            _draftActionChip(
+                              icon: Icons.person_remove_outlined,
+                              label: 'メンバーから外す',
+                              color: AppTheme.textSecondary,
+                              onTap: () => _removeEntryDraftMember(d.id, u, nm),
                             ),
                           ],
-                          InkWell(
-                            onTap: () => _removeEntryDraftMember(d.id, u, nm),
-                            borderRadius: BorderRadius.circular(12),
-                            child: const Padding(
-                              padding: EdgeInsets.only(left: 4, top: 2, bottom: 2, right: 2),
-                              child: Icon(Icons.close, size: 16, color: AppTheme.textHint),
-                            ),
-                          ),
-                        ]),
-                      );
-                    }),
+                        );
+                      });
+                    }(),
                     const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6555,11 +6575,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           label: const Text('追加招待', style: TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
                         ),
-                        TextButton.icon(
+                        // 誤タップ防止: 目立たない小さな文字リンク＋確認ダイアログ
+                        TextButton(
                           onPressed: () => _cancelEntryDraft(d.id, teamName: teamName),
-                          icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
-                          label: const Text('招待を取り消す', style: TextStyle(fontSize: 13, color: AppTheme.error, fontWeight: FontWeight.bold)),
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                            Icon(Icons.delete_outline, size: 14, color: AppTheme.textHint),
+                            SizedBox(width: 3),
+                            Text('招待を取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                          ]),
                         ),
                       ],
                     ),
