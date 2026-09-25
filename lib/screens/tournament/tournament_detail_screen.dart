@@ -4951,10 +4951,17 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      builder: (ctx) => ConstrainedBox(
+        // 画面の6割以上の高さで表示（人数が多ければ最大9割までスクロール）
+        constraints: BoxConstraints(
+          minHeight: MediaQuery.of(ctx).size.height * 0.6,
+          maxHeight: MediaQuery.of(ctx).size.height * 0.9,
+        ),
+        child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 32 + MediaQuery.of(ctx).padding.bottom),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -5016,21 +5023,22 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                 ]),
               );
             }),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
+            const SizedBox(height: 16),
+            // 誤タップ防止: 目立たない小さな文字リンク＋確認ダイアログ
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _cancelEntryDraft(draftId);
+                  _cancelEntryDraft(draftId, teamName: teamName);
                 },
-                icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
-                label: const Text('招待を取り消す', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
-                style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppTheme.error), padding: const EdgeInsets.symmetric(vertical: 12)),
+                style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
+                child: const Text('招待を取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
               ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -6428,7 +6436,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
                         ),
                         TextButton.icon(
-                          onPressed: () => _cancelEntryDraft(d.id),
+                          onPressed: () => _cancelEntryDraft(d.id, teamName: teamName),
                           icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
                           label: const Text('招待を取り消す', style: TextStyle(fontSize: 13, color: AppTheme.error, fontWeight: FontWeight.bold)),
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
@@ -6505,7 +6513,26 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
   }
 
-  Future<void> _cancelEntryDraft(String draftId) async {
+  Future<void> _cancelEntryDraft(String draftId, {String teamName = ''}) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('招待を取り消しますか？', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        content: Text(
+          '${teamName.isNotEmpty ? '「$teamName」の' : ''}エントリー招待を取り消します。\n承認済みのメンバーの分も含めて取り消され、元に戻せません。',
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('やめる')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('取り消す', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('cancelEntryDraft');
       await callable.call({'tournamentId': _tournamentId, 'draftId': draftId});
