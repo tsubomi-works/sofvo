@@ -4954,6 +4954,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final canProxyApprove = _isAdmin ||
         (myUid.isNotEmpty && myUid == (widget.tournament['organizerId'] ?? '').toString());
+    // エントリーの取り消しはサーバー側（cancelEntryDraft）でキャプテン・主催者・管理者のみ許可。
+    final canCancel = canProxyApprove || (myUid.isNotEmpty && myUid == (data['leaderUid'] ?? '').toString());
 
     showModalBottomSheet(
       context: context,
@@ -5032,19 +5034,20 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             }),
             const SizedBox(height: 16),
             // 誤タップ防止: 目立たない小さな文字リンク＋確認ダイアログ
+            if (canCancel)
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _cancelEntryDraft(draftId, teamName: teamName);
+                  _cancelEntryDraft(draftId, teamName: teamName, byLeader: false);
                 },
                 style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
                 child: Row(mainAxisSize: MainAxisSize.min, children: const [
                   Icon(Icons.delete_outline, size: 14, color: AppTheme.textHint),
                   SizedBox(width: 3),
-                  Text('招待を取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                  Text('このエントリーを取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
                 ]),
               ),
             ),
@@ -6577,12 +6580,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                         ),
                         // 誤タップ防止: 目立たない小さな文字リンク＋確認ダイアログ
                         TextButton(
-                          onPressed: () => _cancelEntryDraft(d.id, teamName: teamName),
+                          onPressed: () => _cancelEntryDraft(d.id, teamName: teamName, byLeader: true),
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
                           child: Row(mainAxisSize: MainAxisSize.min, children: const [
                             Icon(Icons.delete_outline, size: 14, color: AppTheme.textHint),
                             SizedBox(width: 3),
-                            Text('招待を取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                            Text('エントリーを取りやめる', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
                           ]),
                         ),
                       ],
@@ -6657,21 +6660,28 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
   }
 
-  Future<void> _cancelEntryDraft(String draftId, {String teamName = ''}) async {
+  /// 承認待ちエントリー（ドラフト）を丸ごと取り消す。
+  /// [byLeader] true: キャプテンが自分のエントリーを取りやめる / false: 主催者・管理者が取り消す。
+  Future<void> _cancelEntryDraft(String draftId, {String teamName = '', required bool byLeader}) async {
+    final team = teamName.isNotEmpty ? '「$teamName」の' : '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('招待を取り消しますか？', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        title: Text(byLeader ? 'エントリーを取りやめますか？' : 'このエントリーを取り消しますか？',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
         content: Text(
-          '${teamName.isNotEmpty ? '「$teamName」の' : ''}エントリー招待を取り消します。\n承認済みのメンバーの分も含めて取り消され、元に戻せません。',
+          '$team承認待ちのエントリーを取り消します。\n'
+          '承認済みのメンバーの分も含めて取り消され、元に戻せません。\n\n'
+          '招待されていたメンバーには取り消しの通知が届きます。',
           style: const TextStyle(fontSize: 14),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('やめる')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('取り消す', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
+            child: Text(byLeader ? '取りやめる' : '取り消す',
+                style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -6682,7 +6692,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       await callable.call({'tournamentId': _tournamentId, 'draftId': draftId});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('招待を取り消しました'), backgroundColor: AppTheme.textSecondary),
+          const SnackBar(content: Text('エントリーを取り消しました'), backgroundColor: AppTheme.textSecondary),
         );
       }
     } catch (_) {

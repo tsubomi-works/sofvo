@@ -244,6 +244,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
         icon = Icons.check_circle;
         iconColor = AppTheme.success;
         break;
+      case 'entry_canceled':
+        icon = Icons.event_busy;
+        iconColor = AppTheme.textSecondary;
+        break;
       case 'entry_declined':
       case 'team_join_request':
         icon = Icons.group_add;

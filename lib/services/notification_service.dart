@@ -4,7 +4,7 @@ class NotificationService {
   static final _firestore = FirebaseFirestore.instance;
 
   /// 通知（ベルアイコン）に表示する対人アクション系タイプ
-  static const actionTypes = ['like', 'comment', 'follow', 'team_join', 'team_leave', 'team_join_request', 'team_join_approved', 'entry_invite', 'entry_confirmed', 'entry_declined'];
+  static const actionTypes = ['like', 'comment', 'follow', 'team_join', 'team_leave', 'team_join_request', 'team_join_approved', 'entry_invite', 'entry_confirmed', 'entry_declined', 'entry_canceled'];
 
   /// お知らせタブに表示する大会・システム系タイプ
   static const announcementTypes = [

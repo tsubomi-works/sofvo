@@ -3899,11 +3899,34 @@ exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   const snap = await draftRef.get();
   if (!snap.exists) return { canceled: true };
   const draft = snap.data() || {};
-  const organizerId = ((await tRef.get()).data() || {}).organizerId;
-  if (draft.leaderUid !== uid && organizerId !== uid) {
-    throw new functions.https.HttpsError("permission-denied", "取り消せるのはキャプテンまたは主催者のみです");
+  const [tSnap, callerSnap] = await Promise.all([tRef.get(), db.collection("users").doc(uid).get()]);
+  const tData = tSnap.data() || {};
+  const isLeader = draft.leaderUid === uid;
+  const isAdmin = callerSnap.data()?.isAdmin === true;
+  if (!isLeader && tData.organizerId !== uid && !isAdmin) {
+    throw new functions.https.HttpsError("permission-denied", "取り消せるのはキャプテン・主催者・管理者のみです");
   }
   await draftRef.delete();
+
+  // 招待されていたメンバー全員（取り消した本人以外）に知らせる。
+  // 以前は通知が無く、承認待ちの表示が黙って消えるだけだった。
+  const teamName = draft.teamName || "";
+  const isMemberAdd = draft.type === "memberAdd";
+  const what = isMemberAdd ? `チーム「${teamName}」へのメンバー追加` : `チーム「${teamName}」の大会エントリー`;
+  const callerName = (callerSnap.data() || {}).nickname || "";
+  const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+  await Promise.all(invited.filter((u) => u !== uid).map(async (u) => {
+    try {
+      await db.collection("users").doc(u).collection("notifications").add({
+        type: "entry_canceled",
+        tournamentId, tournamentName: tData.name || "", teamName,
+        ...(isLeader
+          ? { senderId: uid, senderName: callerName, senderAvatar: "", message: `が${what}を取りやめました` }
+          : { senderId: "system", senderName: "", senderAvatar: "", message: `${what}は主催者により取り消されました` }),
+        read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) { console.error("[cancelEntryDraft] notify failed:", u, e); }
+  }));
   return { canceled: true };
 });
 
