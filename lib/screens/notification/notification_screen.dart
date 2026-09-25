@@ -165,6 +165,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderName = (data['senderName'] ?? '').toString();
     if (tournamentId.isEmpty || draftId.isEmpty) return;
 
+    // 招待を開いた＝既読としてキャプテン・主催者に見えるようにする（失敗しても無視）
+    FirebaseFunctions.instance.httpsCallable('markEntryDraftSeen').call({
+      'tournamentId': tournamentId,
+      'draftId': draftId,
+    }).then<void>((_) {}, onError: (_) {});
+
     final approve = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
