@@ -7,6 +7,7 @@ import '../../services/push_notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -174,6 +175,15 @@ class _HomeScreenState extends State<HomeScreen>
     final tournamentById = {
       for (var i = 0; i < tournamentIds.length; i++) tournamentIds[i]: tournamentDocs[i],
     };
+
+    // 起動時ポップアップに表示される＝招待を見たので既読にする（失敗しても無視）
+    for (final d in pending) {
+      if ((d.data()['seenAt'] as Map?)?[uid] != null) continue;
+      FirebaseFunctions.instance.httpsCallable('markEntryDraftSeen').call({
+        'tournamentId': d.reference.parent.parent!.id,
+        'draftId': d.id,
+      }).then<void>((_) {}, onError: (_) {});
+    }
 
     return pending.map((d) {
       final data = d.data();

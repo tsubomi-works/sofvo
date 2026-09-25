@@ -4949,6 +4949,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
     final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
     final memberAvatars = Map<String, dynamic>.from(data['memberAvatars'] as Map? ?? {});
+    final seenAt = Map<String, dynamic>.from(data['seenAt'] as Map? ?? {});
     // 代理承認はサーバー側（adminApproveEntryDraftMember）で主催者・管理者のみ許可
     // （キャプテンは当事者のため対象外）。編集者などには押しても失敗するボタンを出さない。
     final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -5004,11 +5005,15 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             ...invited.map((u) {
               final nm = (memberNames[u] ?? '?').toString();
               final st = (approvals[u] ?? 'pending').toString();
+              final seen = seenAt[u] != null;
               return _draftMemberRow(
                 uid: u,
                 name: nm,
                 avatarUrl: (memberAvatars[u] ?? '').toString(),
                 status: st,
+                // 招待を見たかどうか（大会詳細・通知・起動時ポップアップのいずれかで表示されたら既読）
+                pendingLabel: seen ? '既読・未回答' : '未読',
+                pendingColor: seen ? AppTheme.accentColor : AppTheme.textSecondary,
                 actions: st != 'pending'
                     ? const []
                     : [
