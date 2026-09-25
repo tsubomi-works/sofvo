@@ -5,10 +5,9 @@ Sofvo で実装した「Instagram 風・浮島型すりガラス・スクロー�
 
 実体（Sofvo 内）: `lib/screens/home/main_tab_screen.dart`
 
-> **2026-09-25 更新**: バー本体（すりガラスの浮島）は自作のまま。**移動中の泡だけ**、ネイティブ（iOS/Android）では
-> pub パッケージ **`liquid_glass_widgets`** の `AdaptiveGlass`（ガラスシェーダー）で描くようにした（iOS 26 と同じく縁の屈折・色収差・光沢が出る）。
-> Web は従来の `RawMagnifier` 近似のまま。泡は押した瞬間にガラス化し、形はバーから上下にはみ出す横長（幅≒1.5タブ）。
-> 以下の汎用版コードはパッケージなしで動く近似版。
+> **2026-09-25 更新（iPhone 実機で確認済み）**: 移動中の泡を **本物の iOS 26 Liquid Glass**（縁の屈折・虹色のにじみ・くっきりした中身）にした。
+> やり方は下の「**★ 本物の Liquid Glass の泡にする（liquid_glass_widgets）**」にまとめてある。**別アプリに流用するときはまずこの節を読む**。
+> バー本体（すりガラスの浮島）は自作のまま。汎用版コードはパッケージなしで動く近似版の泡。
 
 ---
 
@@ -37,6 +36,7 @@ Sofvo で実装した「Instagram 風・浮島型すりガラス・スクロー�
 
 iOS 26 の Liquid Glass の**本来の挙動**に合わせる: **静止時はただの薄いカプセル**で、
 **タブ間を移動している間だけ**水滴ガラスに変化する（常時レンズ表示は白バーでは濁った塊に見えて失敗だった）。
+（※ここは 2026/07 時点の近似版の記録。**2026/09 以降、ネイティブの泡は上の「★ 本物の Liquid Glass の泡にする」節の方式**。Web は引き続きこの近似版）
 本物の屈折歪みはフラグメントシェーダーが必要（Impeller 必須＝Web 非対応）なため使わず、全プラットフォームで動く近似で構成:
 
 - **静止時**: バー内に収まる横長ピル。カプセルは**無色の透明ガラス**（黒 alpha 0.06 のみ）で、選択の主張は**アイコン＋ラベルのネイビー**（`AppTheme.primaryColor`）が担う。`BackdropFilter` なし（コスト削減＋濁り防止）
@@ -58,6 +58,132 @@ iOS 26 の Liquid Glass の**本来の挙動**に合わせる: **静止時はた
   - ドラッグキャンセル時はタブを切り替えず泡だけ元に戻す
 
 実装は `lib/screens/home/main_tab_screen.dart` の `_BottomNavState`（ドラッグ）と `_LiquidCapsule`（`glass` パラメータ）を参照。
+
+---
+
+## ★ 本物の Liquid Glass の泡にする（liquid_glass_widgets）— 2026-09-25 実機確認済み
+
+iOS 26 の純正タブバー（Chatwork 等）で、タブを押す・なぞると出る **「ぬるっと膨らんで、縁でアイコンがグニャッと曲がり、虹色ににじむ泡」** を再現する方法。
+**バー本体は自作の浮島（上の汎用版）のまま、泡だけを差し替える**のがポイント。
+
+### 結論（3行）
+1. pub パッケージ **`liquid_glass_widgets`**（MIT・Flutter 3.41 以上）を入れる
+2. 泡の中身を **`AdaptiveGlass`**（ガラスシェーダー）で描く。**ネイティブ（iOS/Android）だけ**。Web は従来の `RawMagnifier` 近似のまま
+3. 泡の形を **横長（幅≒1.5タブ・高さ≒バー+15%）** にし、**指が触れた瞬間にガラス化**させる
+
+### やってはいけなかったこと（遠回りの記録）
+| 試したこと | 結果 |
+|---|---|
+| 自作の `RawMagnifier` ＋ ぼかし | 全体が均一に拡大されるだけ＝虫眼鏡。**縁だけ曲がる・虹色は原理的に出ない**（ピクセルごとにずらす量を変えるにはシェーダーが必要） |
+| バーごと `GlassTabBar`（パッケージの完成品タブバー）に置き換え | バーの見た目・縮み方まで変わってしまい意図と違った。**欲しいのは泡だけ** |
+| 泡に `AnimatedGlassIndicator`（パッケージ内部の指示器）を流用 | Web の軽量描画で `clipExpansion` 分だけ泡が膨張して巨大な丸になった。サイズが制御しづらい |
+| **`AdaptiveGlass` を泡の箱にそのまま入れる** | ✅ 箱のサイズどおりに描かれ、実機で狙いどおり |
+| Web でのプレビュー確認 | Web はフル品質シェーダーが動かず、**本当の見た目は iPhone 実機（TestFlight）でしか確認できない**。モックで判断しないこと |
+
+### 手順
+
+**① 依存を追加**（`pubspec.yaml`）
+```yaml
+dependencies:
+  liquid_glass_widgets: ^1.7.2   # Flutter >= 3.41 が必要
+```
+
+**② `main.dart` で初期化**（シェーダーの先読み。初回表示のちらつき防止）
+```dart
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // ...Firebase 等の初期化...
+  await LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
+  runApp(LiquidGlassWidgets.wrap(
+    child: const MyApp(),
+    // アプリがライト固定なら固定する（端末のダークモードでガラスの縁や影が消えるのを防ぐ）
+    brightnessResolver: (_) => Brightness.light,
+  ));
+}
+```
+
+**③ 泡（選択カプセル）の中身をネイティブだけ `AdaptiveGlass` に**
+静止時は今までどおり薄いピル。`glass`（0＝静止〜1＝移動中ピーク）が上がった時だけガラスを描く。
+```dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+
+// 泡のガラス設定。中身はくっきり（blur 0）、縁で強く曲げて虹色ににじませる
+static const _bubbleSettings = LiquidGlassSettings(
+  thickness: 30,            // ガラスの厚み＝縁の曲がりの幅
+  refractiveIndex: 1.25,    // 屈折率＝曲がりの強さ
+  chromaticAberration: 0.25,// 虹色のにじみ（0で無し）
+  blur: 0,                  // ぼかし無し（中身がくっきり見えるのが iOS 26 らしさ）
+);
+
+// _LiquidCapsule.build の中身の分岐
+child: glass < 0.01
+    ? fill                                   // 静止時：薄いピル（レンズ類は組み込まない）
+    : !kIsWeb
+        ? AdaptiveGlass(                     // ネイティブ：本物のガラス
+            shape: const LiquidRoundedRectangle(borderRadius: 999), // 999＝常に完全なカプセル形
+            settings: _bubbleSettings.copyWith(visibility: glass),  // glass に合わせてフェード
+            quality: GlassQuality.premium,
+            child: const SizedBox.expand(),
+          )
+        : webLensFallback(),                 // Web：従来の RawMagnifier 近似（汎用版のまま）
+```
+
+**④ 描画順は「バー背景 → アイコン/ラベル → 泡（最前面）」**
+ガラスは**自分の下に描かれたもの**を曲げる。アイコンを泡の下に置かないと、曲がって虹色になるものが無い。
+泡は `IgnorePointer` で包んでタップを下のタブに通す。外側の `Stack` は `clipBehavior: Clip.none`（泡がバーからはみ出すため）。
+
+**⑤ 泡の形：横長でバーから上下にはみ出す**（iOS 26 の画面録画をコマ送りして実測）
+```dart
+Transform.scale(
+  scaleX: 1 + 0.55 * glass + 0.06 * wobble, // 幅 ≒ 1.5 タブ分
+  scaleY: 1 + 0.50 * glass - 0.06 * wobble, // 高さ ≒ バー + 15%（前は 0.90 で真円になり違った）
+  child: _LiquidCapsule(glass: glass),
+)
+```
+
+**⑥ 指が触れた瞬間にガラス化**（iOS 26 は押しただけで泡になる。離すとタブに吸い付いて戻る）
+バー全体を包む `GestureDetector` の外側に `Listener` を足す。`Listener` はジェスチャーの取り合いに参加しないので、タップ・横ドラッグと干渉しない。
+```dart
+return Listener(
+  onPointerDown: (_) => _glassCtrl.forward(),   // 押した瞬間に膨らんでガラス化
+  onPointerUp: (_) => _glassCtrl.reverse(),     // 離すと戻る
+  onPointerCancel: (_) => _glassCtrl.reverse(),
+  child: GestureDetector(
+    behavior: HitTestBehavior.translucent,
+    onHorizontalDragStart: ..., // なぞりで泡が指に追従（既存）
+    ...
+  ),
+);
+```
+（`_glassCtrl` は 180ms の `AnimationController`。タブ切替時のパルスと `max()` で合成して `glass` にしている）
+
+### 確認方法
+- **Web やシミュレーターのスクショでは判断できない**（軽量描画になる）。**iPhone 実機**で見る
+- Sofvo では TestFlight（GitHub Actions の `ci_beta`）で上げて確認した
+- 見るポイント: ①泡の中身がくっきり ②縁でアイコンが曲がる ③縁に虹色 ④横長でバーから上下にはみ出す ⑤押しただけで膨らむ
+
+### 調整つまみ
+| やりたいこと | 変える値 |
+|---|---|
+| 縁の曲がりをもっと強く/弱く | `refractiveIndex`（1.25）・`thickness`（30） |
+| 虹色を強く/消す | `chromaticAberration`（0.25 / 0 で消える） |
+| 泡を大きく/小さく | `scaleX`（+0.55）・`scaleY`（+0.50） |
+| 膨らむ速さ | `_glassCtrl` の duration（180ms） |
+| 中身を少し曇らせる | `blur`（0。上げると中身が見えにくくなるので少しだけ） |
+
+### 別アプリに渡すプロンプト（泡だけ本物にする版・コピペ用）
+
+> 既存のボトムナビの「選択カプセル（移動中に膨らむ泡）」だけを、iOS 26 の Liquid Glass と同じ見た目にしてください。バー本体の見た目は変えないこと。
+>
+> 1. pub パッケージ `liquid_glass_widgets: ^1.7.2` を追加（Flutter 3.41 以上）。`main()` で `await LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);` を呼び、`runApp(LiquidGlassWidgets.wrap(child: MyApp(), brightnessResolver: (_) => Brightness.light))` で包む。
+> 2. 泡が移動中（強度 `glass` > 0.01）のときだけ、ネイティブ（`!kIsWeb`）では泡の中身を `AdaptiveGlass(shape: LiquidRoundedRectangle(borderRadius: 999), settings: LiquidGlassSettings(thickness: 30, refractiveIndex: 1.25, chromaticAberration: 0.25, blur: 0).copyWith(visibility: glass), quality: GlassQuality.premium, child: SizedBox.expand())` で描く。Web は従来の描き方のまま。
+> 3. 描画順は「バー背景 → アイコン/ラベル → 泡（最前面・IgnorePointer）」。外側 Stack は `Clip.none`。
+> 4. 泡の形は横長にする：`Transform.scale(scaleX: 1 + 0.55*glass, scaleY: 1 + 0.50*glass)`（幅≒1.5タブ、高さ≒バー+15%で上下にはみ出す）。
+> 5. バー全体を `Listener(onPointerDown: 泡をガラス化, onPointerUp/onPointerCancel: 戻す)` で包み、指が触れた瞬間に泡になるようにする（GestureDetector のタップ・横ドラッグとは干渉しない）。
+> 6. 見た目の確認は iPhone 実機で行う（Web・シミュレーターは軽量描画になり判断できない）。
 
 ---
 
@@ -382,6 +508,8 @@ GlassNavScaffold(
 > 6. プラットフォームは Android / iOS / Web で同じ見た目にすること（Web は CanvasKit で `BackdropFilter` を有効化）。
 >
 > 上記を満たす再利用可能なウィジェット（`GlassNavScaffold` と `GlassNavItem`）として実装し、色・タブ・バッジはコンストラクタで差し替えられるようにしてください。
+>
+> （移動中の泡を iOS 26 と同じ本物の Liquid Glass にしたい場合は、続けて「★ 本物の Liquid Glass の泡にする」節の『泡だけ本物にする版』プロンプトも渡す）
 
 ---
 
@@ -400,7 +528,8 @@ GlassNavScaffold(
 | 選択アイコンの色 | Sofvo実体: `_NavItem` の `AppTheme.primaryColor`（ネイビー） |
 | 移動中レンズの拡大率 | Sofvo実体: `_LiquidCapsule` の `magnificationScale: 1 + 0.35 * glass` |
 | 移動中ガラスの曇り | Sofvo実体: `_LiquidCapsule` の `blur(1.5 × glass)`（上げすぎ厳禁） |
-| 移動中の泡の丸さ・大きさ | Sofvo実体: `scaleX: 1 + 0.55 * glass` / `scaleY: 1 + 0.90 * glass`（縦横比≒1で真円） |
+| 移動中の泡の丸さ・大きさ | Sofvo実体: `scaleX: 1 + 0.55 * glass` / `scaleY: 1 + 0.50 * glass`（横長・バーから上下にはみ出す。iOS 26 実測比） |
+| 本物ガラスの曲がり・虹色 | Sofvo実体: `_LiquidCapsule._bubbleSettings`（`refractiveIndex` / `thickness` / `chromaticAberration`） |
 | ぷるぷるの強さ・減衰 | Sofvo実体: `0.06 * wobble`（振幅）・`sin(6πt) × e^(-4t)`（周波数・減衰） |
 </content>
 </invoke>
