@@ -24,9 +24,10 @@ on:
         options:
           - ci_beta
           - ci_release
+          - ci_submit
         default: ci_beta
       release_notes:
-        description: '「このバージョンの最新情報」（ci_release のときのみ使用）'
+        description: '「このバージョンの最新情報」（ci_release / ci_submit のときのみ使用）'
         required: false
         default: ''
 
@@ -62,6 +63,8 @@ jobs:
         run: flutter pub get
 
       - name: Import signing certificate
+        # ci_submit（アップロード済みビルドの審査提出だけ）はビルド不要
+        if: inputs.lane != 'ci_submit'
         env:
           CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
@@ -99,9 +102,13 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build Flutter iOS (no codesign)
+        # ci_submit（アップロード済みビルドの審査提出だけ）はビルド不要
+        if: inputs.lane != 'ci_submit'
         run: flutter build ios --release --no-codesign
 
       - name: CocoaPods
+        # ci_submit（アップロード済みビルドの審査提出だけ）はビルド不要
+        if: inputs.lane != 'ci_submit'
         run: cd ios && pod install --repo-update
 
       - name: Fastlane

@@ -111,6 +111,33 @@ platform :ios do
     )
   end
 
+  desc "CI: アップロード済みのビルドを審査提出だけする（再ビルドしない）"
+  # ci_release が Apple のビルド処理待ちで打ち切られたときの続き用。
+  # pubspec.yaml のバージョン/ビルド番号のビルドが App Store Connect に
+  # 届いている前提で、メタデータ・リリースノートを更新して審査に出す。
+  lane :ci_submit do
+    api_key = ci_api_key
+    version = File.read(File.expand_path("../../pubspec.yaml", __dir__))[/^version:\s*(\S+)/, 1]
+    UI.user_error!("pubspec.yaml から version を読めませんでした") if version.nil?
+    app_version, build_number = version.split("+")
+    UI.message("審査提出するビルド: #{app_version} (#{build_number})")
+    upload_to_app_store(
+      api_key: api_key,
+      app_version: app_version,
+      build_number: build_number,
+      skip_binary_upload: true,
+      force: true,
+      skip_metadata: false,
+      skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      submit_for_review: true,
+      automatic_release: true,
+      release_notes: {
+        "ja" => ENV.fetch("RELEASE_NOTES_JA", "・細かな不具合の修正と安定性の向上"),
+      },
+    )
+  end
+
   desc "CI: TestFlight にアップロード（審査提出しない）"
   lane :ci_beta do
     api_key = ci_api_key

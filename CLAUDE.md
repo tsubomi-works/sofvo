@@ -92,7 +92,7 @@
 
 - 仕組みの詳細・Secrets の一覧: `docs/ios_ci_release.md`
 - 失敗時は Actions のログと、成果物 `gym-log`（xcodebuild の生ログ）を見る
-- **`ci_release` はアップロード後に Apple のビルド処理待ち（`Waiting for the build to show up in the build list`）が入る。混雑時は1時間近くかかる**（2026-09-25 に48分待って当時の上限90分で打ち切られた→上限を180分に延長）。打ち切られてもビルドは Apple に届いているので、App Store Connect のバージョンページでそのビルドを選んで「審査に提出」すれば再ビルド不要
+- **`ci_release` はアップロード後に Apple のビルド処理待ち（`Waiting for the build to show up in the build list`）が入る。混雑時は1時間近くかかる**（2026-09-25 に48分待って当時の上限90分で打ち切られた→上限を180分に延長）。打ち切られてもビルドは Apple に届いているので、**`ci_submit`（ビルドせず、pubspec のバージョン/ビルド番号の既存ビルドを審査提出だけする。数分で終わる）**を `release_notes` 付きで実行すれば再ビルド不要（App Store Connect のバージョンページでビルドを選んで「審査に提出」しても同じ）
 - **Apple は iOS 26 SDK（Xcode 26 以降）でビルドしたバイナリしか受け付けない。** ワークフローはランナー上の最新 Xcode を自動選択するので対応済み
 - ランナーは `macos-26`。public リポジトリなので **macOS ランナーは無料**
 - 必要な Secrets（登録済み・GitHub に保存されているので再設定不要）:
