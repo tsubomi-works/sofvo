@@ -4949,13 +4949,11 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
     final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
     final memberAvatars = Map<String, dynamic>.from(data['memberAvatars'] as Map? ?? {});
-    // 代理承認はサーバー側（adminApproveEntryDraftMember）でキャプテン・主催者・管理者のみ許可。
-    // 編集者などには押しても失敗するボタンを出さない。
+    // 代理承認はサーバー側（adminApproveEntryDraftMember）で主催者・管理者のみ許可
+    // （キャプテンは当事者のため対象外）。編集者などには押しても失敗するボタンを出さない。
     final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final canProxyApprove = _isAdmin ||
-        (myUid.isNotEmpty &&
-            (myUid == (data['leaderUid'] ?? '').toString() ||
-                myUid == (widget.tournament['organizerId'] ?? '').toString()));
+        (myUid.isNotEmpty && myUid == (widget.tournament['organizerId'] ?? '').toString());
 
     showModalBottomSheet(
       context: context,
