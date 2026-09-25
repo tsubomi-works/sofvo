@@ -5078,6 +5078,23 @@ exports.resendEntryInviteNotification = functions.https.onCall(async (data, cont
     throw new functions.https.HttpsError("failed-precondition", "既に承認済みです（再通知の必要はありません）");
   }
 
+  // 連打防止: 同じメンバーへの再通知は1時間に1回まで（プッシュ通知が何度も飛ぶのを防ぐ）
+  const RESEND_COOLDOWN_MS = 60 * 60 * 1000;
+  // 連打で同時に呼ばれても1回しか通らないよう、判定と記録をトランザクションで行う
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(draftRef);
+    if (!cur.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません");
+    const last = ((cur.data() || {}).lastResentAt || {})[targetUid];
+    const lastMs = last && typeof last.toMillis === "function" ? last.toMillis() : 0;
+    const elapsed = Date.now() - lastMs;
+    if (lastMs && elapsed < RESEND_COOLDOWN_MS) {
+      const remainMin = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 60000);
+      throw new functions.https.HttpsError("resource-exhausted",
+        `再通知は1時間に1回までです（あと${remainMin}分で再通知できます）`);
+    }
+    tx.update(draftRef, { [`lastResentAt.${targetUid}`]: admin.firestore.Timestamp.now() });
+  });
+
   const tName = (tSnap.data() || {}).name || "";
   const leaderUid = draft.leaderUid || "";
   await db.collection("users").doc(targetUid).collection("notifications").add({

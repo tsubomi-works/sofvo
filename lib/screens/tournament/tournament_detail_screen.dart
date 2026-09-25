@@ -5013,15 +5013,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                     ? const []
                     : [
                         if (canResend)
-                          _draftActionChip(
-                          icon: Icons.notifications_active_outlined,
-                          label: '再通知',
-                          color: AppTheme.accentColor,
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            _resendEntryInvite(draftId, u, nm);
-                          },
-                        ),
+                          _resendChip(
+                            draftData: data,
+                            draftId: draftId,
+                            uid: u,
+                            name: nm,
+                            beforeSend: () => Navigator.pop(ctx),
+                          ),
                         if (canProxyApprove)
                           _draftActionChip(
                             icon: Icons.verified_outlined,
@@ -5180,7 +5178,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     required IconData icon,
     required String label,
     required Color color,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return InkWell(
       onTap: onTap,
@@ -6555,12 +6553,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           showDivider: e.key != others.length - 1,
                           actions: [
                             if (st == 'pending')
-                              _draftActionChip(
-                                icon: Icons.notifications_active_outlined,
-                                label: '再通知',
-                                color: AppTheme.accentColor,
-                                onTap: () => _resendEntryInvite(d.id, u, nm),
-                              ),
+                              _resendChip(draftData: data, draftId: d.id, uid: u, name: nm),
                             _draftActionChip(
                               icon: Icons.person_remove_outlined,
                               label: 'メンバーから外す',
@@ -6703,7 +6696,63 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
   }
 
+  /// 再通知のクールダウン（サーバー側 resendEntryInviteNotification と同じ1時間）。
+  static const _resendCooldown = Duration(hours: 1);
+
+  /// 最後に再通知してから1時間以内なら、あと何分かを返す（再通知できるなら null）。
+  int? _resendRemainingMinutes(Map<String, dynamic> draftData, String uid) {
+    final last = (draftData['lastResentAt'] as Map?)?[uid];
+    if (last is! Timestamp) return null;
+    final remain = _resendCooldown - DateTime.now().difference(last.toDate());
+    if (remain <= Duration.zero) return null;
+    return (remain.inSeconds / 60).ceil();
+  }
+
+  /// 再通知ボタン。1時間以内に再通知済みなら押せない表示にする。
+  Widget _resendChip({
+    required Map<String, dynamic> draftData,
+    required String draftId,
+    required String uid,
+    required String name,
+    VoidCallback? beforeSend,
+  }) {
+    final remain = _resendRemainingMinutes(draftData, uid);
+    if (remain != null) {
+      return _draftActionChip(
+        icon: Icons.notifications_paused_outlined,
+        label: '再通知済み（あと$remain分）',
+        color: AppTheme.textHint,
+        onTap: null,
+      );
+    }
+    return _draftActionChip(
+      icon: Icons.notifications_active_outlined,
+      label: '再通知',
+      color: AppTheme.accentColor,
+      onTap: () {
+        beforeSend?.call();
+        _resendEntryInvite(draftId, uid, name);
+      },
+    );
+  }
+
   Future<void> _resendEntryInvite(String draftId, String targetUid, String targetName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('再通知しますか？', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        content: Text('$targetName さんに、参加の承認をお願いする通知をもう一度送ります。\n\n再通知は1時間に1回までです。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('やめる')),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('再通知する', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('resendEntryInviteNotification');
       await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
