@@ -3912,17 +3912,20 @@ exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   // 以前は通知が無く、承認待ちの表示が黙って消えるだけだった。
   const teamName = draft.teamName || "";
   const isMemberAdd = draft.type === "memberAdd";
-  const what = isMemberAdd ? `チーム「${teamName}」へのメンバー追加` : `チーム「${teamName}」の大会エントリー`;
-  const callerName = (callerSnap.data() || {}).nickname || "";
+  const what = isMemberAdd ? `チーム「${teamName}」へのメンバー追加` : `チーム「${teamName}」のエントリー`;
+  const callerData = callerSnap.data() || {};
+  // 主催者でない管理者が取り消した場合は個人名を出さず「Sofvo運営」とする
+  const senderName = (isLeader || tData.organizerId === uid) ? (callerData.nickname || "メンバー") : "Sofvo運営";
+  const senderAvatar = (isLeader || tData.organizerId === uid) ? (callerData.avatarUrl || "") : "";
+  const tLabel = tData.name ? `大会「${tData.name}」の` : "";
   const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
   await Promise.all(invited.filter((u) => u !== uid).map(async (u) => {
     try {
       await db.collection("users").doc(u).collection("notifications").add({
         type: "entry_canceled",
         tournamentId, tournamentName: tData.name || "", teamName,
-        ...(isLeader
-          ? { senderId: uid, senderName: callerName, senderAvatar: "", message: `が${what}を取りやめました` }
-          : { senderId: "system", senderName: "", senderAvatar: "", message: `${what}は主催者により取り消されました` }),
+        senderId: uid, senderName, senderAvatar,
+        message: isLeader ? `が${tLabel}${what}を取りやめました` : `が${tLabel}${what}を取り消しました`,
         read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     } catch (e) { console.error("[cancelEntryDraft] notify failed:", u, e); }
@@ -5353,6 +5356,7 @@ exports.onNotificationCreatedPush = functions.firestore
       official: "official",
       team_join: "team",
       team_leave: "team",
+      entry_canceled: "tournament",
     };
 
     const settingKey = settingKeyMap[notifType];
@@ -5391,6 +5395,9 @@ exports.onNotificationCreatedPush = functions.firestore
       case "team_join":
       case "team_leave":
         title = "チーム";
+        break;
+      case "entry_canceled":
+        title = "大会エントリー";
         break;
       default:
         title = "Sofvo";
