@@ -5,6 +5,7 @@
   - 実体: `lib/screens/home/main_tab_screen.dart`
   - 別アプリへ流用する場合はこのドキュメント内の「汎用版コード」「別アプリに渡すプロンプト」を使う
   - ハマりどころ: `Scaffold(extendBody:true)` ／ 各画面 `SafeArea(bottom:false)` ／ リスト下パディング ／ FAB持ち上げ ／ ページ背景白（詳細はドキュメント参照）
+  - **本物の Liquid Glass の泡（2026-09-25・iPhone実機確認済み）**: 移動中の泡だけ `liquid_glass_widgets` の `AdaptiveGlass` で描く方式。手順・遠回りの記録・コピペ用プロンプトはドキュメントの「★ 本物の Liquid Glass の泡にする」節
   - **別プロジェクトへの共有メモ（2026-06-21）**: 浮島型ボトムナビを他プロジェクトへ流用する際は、この `docs/floating_glass_bottom_nav.md` を**そのまま1ファイル渡せばOK**（汎用版コード＋移植用プロンプト同梱）。実体ファイルやハマりどころの全文も含まれている。
 
 ## 開発ルール
