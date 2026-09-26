@@ -3564,6 +3564,23 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
         read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     } catch (e) { /* noop */ }
+  } else {
+    // 承認はしたがまだ他のメンバーの承認待ち（未成立）→ キャプテンに進捗を知らせる
+    // （今までここだけキャプテンへの通知が無く、全員揃うまで気づけなかった）
+    const draft = result.draft;
+    if (draft.leaderUid && draft.leaderUid !== uid) {
+      try {
+        const meSnap = await db.collection("users").doc(uid).get();
+        const myName = (meSnap.exists && meSnap.data().nickname) || "メンバー";
+        await db.collection("users").doc(draft.leaderUid).collection("notifications").add({
+          type: "entry_confirmed",
+          tournamentId, teamName: draft.teamName,
+          senderId: uid, senderName: myName, senderAvatar: "",
+          message: `がチーム「${draft.teamName}」への参加を承認しました`,
+          read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) { /* noop */ }
+    }
   }
 
   // 回答した本人の招待通知は「対応済み」にする
@@ -3691,19 +3708,40 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
     return { finalized: false, teamName: draft.teamName, targetUid, leaderUid: draft.leaderUid };
   });
 
+  const tNameForNotify = (tSnapPre.data() || {}).title || "";
+
   // 代理承認された本人に知らせる
   try {
-    const tName = (tSnapPre.data() || {}).title || "";
     await db.collection("users").doc(targetUid).collection("notifications").add({
       type: "entry_confirmed",
       senderId: callerUid, senderName: callerName, senderAvatar: "",
-      tournamentId, tournamentName: tName, teamName: result.teamName,
+      tournamentId, tournamentName: tNameForNotify, teamName: result.teamName,
       message: result.finalized
         ? `がチーム「${result.teamName}」への参加を代わりに承認し、エントリーが成立しました`
         : `がチーム「${result.teamName}」への参加を代わりに承認しました`,
       read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   } catch (e) { console.error("[adminApproveEntryDraftMember] notify target failed:", e); }
+
+  // キャプテンにも知らせる。「finalized && !memberAdd」のときは下の一斉通知
+  // （invited 全員＝キャプテンも含む）で既に届くので、それ以外のケースだけ個別に通知する
+  // （通常ドラフトの未成立時・memberAdd 時はキャプテンへの通知が今まで一切無かった）
+  const leaderNotifiedByBroadcast = result.finalized && !result.memberAdd;
+  if (!leaderNotifiedByBroadcast) {
+    const leaderUid = draftPre.leaderUid || "";
+    if (leaderUid && leaderUid !== targetUid && leaderUid !== callerUid) {
+      try {
+        const targetName = (draftPre.memberNames || {})[targetUid] || "メンバー";
+        await db.collection("users").doc(leaderUid).collection("notifications").add({
+          type: "entry_confirmed",
+          senderId: callerUid, senderName: callerName, senderAvatar: "",
+          tournamentId, tournamentName: tNameForNotify, teamName: result.teamName,
+          message: `が「${targetName}」さんの参加を代わりに承認しました（チーム「${result.teamName}」）`,
+          read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) { console.error("[adminApproveEntryDraftMember] notify leader failed:", e); }
+    }
+  }
 
   if (result.finalized && !result.memberAdd) {
     const invited = result.activeInvited || [];
