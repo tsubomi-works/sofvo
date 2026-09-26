@@ -1980,36 +1980,14 @@ class _HomeScreenState extends State<HomeScreen>
                 color = AppTheme.error;
                 title = '残りわずか';
                 break;
-              case 'entry_invite':
-                icon = Icons.how_to_reg;
-                color = AppTheme.primaryColor;
-                title = '大会エントリー招待';
-                break;
-              case 'entry_confirmed':
-                icon = Icons.check_circle;
-                color = AppTheme.success;
-                title = 'エントリー成立';
-                break;
-              case 'entry_declined':
-                icon = Icons.group_off;
-                color = AppTheme.textSecondary;
-                title = 'エントリー辞退';
-                break;
-              case 'entry_canceled':
-                icon = Icons.event_busy;
-                color = AppTheme.textSecondary;
-                title = 'エントリー取り消し';
-                break;
               default:
                 icon = Icons.info_outline;
                 color = AppTheme.primaryColor;
                 title = 'お知らせ';
             }
-            // 特定の個人・アカウントが発信元の通知（招待・募集開始など）は、
+            // 特定の個人・アカウントが発信元の通知（募集開始など）は、
             // 「システム」からの通知と区別してアバターを出し、誰からかを一目で
-            // わかるようにする。entry_invite の message は「が大会「X」に
-            // 招待しました」のように送信者名に続く体言止めなので、その場合だけ
-            // 名前を太字で補って読める文にする（他の型は既に名前が本文に含まれる）
+            // わかるようにする
             final senderId = (data['senderId'] ?? '').toString();
             final senderName = (data['senderName'] ?? '').toString();
             final senderAvatar = (data['senderAvatar'] ?? '').toString();
@@ -2025,11 +2003,6 @@ class _HomeScreenState extends State<HomeScreen>
                 isRead: isRead,
                 senderName: hasSender ? senderName : null,
                 senderAvatar: hasSender && senderAvatar.isNotEmpty ? senderAvatar : null,
-                emphasizeSenderName: hasSender &&
-                    (type == 'entry_invite' ||
-                        type == 'entry_confirmed' ||
-                        type == 'entry_declined' ||
-                        type == 'entry_canceled'),
                 onTap: () => _onAnnouncementTap(data),
               ),
             );
@@ -2117,24 +2090,12 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
-    if (type == 'entry_invite' && (data['canceled'] == true || data['resolved'] == true)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(data['canceled'] == true ? 'この招待は取り消されました' : 'この招待は対応済みです'),
-        backgroundColor: AppTheme.textSecondary,
-      ));
-      return;
-    }
-
     if ((type == 'tournament_announcement' ||
             type == 'waitlist_available' ||
             type == 'points_earned' ||
             type == 'tournament_created' ||
             type == 'deadline_approaching' ||
-            type == 'slots_low' ||
-            type == 'entry_invite' ||
-            type == 'entry_confirmed' ||
-            type == 'entry_declined' ||
-            type == 'entry_canceled') &&
+            type == 'slots_low') &&
         tournamentId != null &&
         tournamentId.isNotEmpty) {
       try {
@@ -2194,7 +2155,6 @@ class _HomeScreenState extends State<HomeScreen>
     String? linkLabel,
     String? senderName,
     String? senderAvatar,
-    bool emphasizeSenderName = false,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -2273,20 +2233,10 @@ class _HomeScreenState extends State<HomeScreen>
                     ],
                   ),
                   const SizedBox(height: 4),
-                  (emphasizeSenderName && senderName != null && senderName.isNotEmpty)
-                      ? RichText(
-                          text: TextSpan(
-                            style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-                            children: [
-                              TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-                              TextSpan(text: ' $body'),
-                            ],
-                          ),
-                        )
-                      : Text(body,
-                          style: const TextStyle(
-                              fontSize: 14,
-                              color: AppTheme.textSecondary)),
+                  Text(body,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          color: AppTheme.textSecondary)),
                   if (link != null && link.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Builder(builder: (_) {
