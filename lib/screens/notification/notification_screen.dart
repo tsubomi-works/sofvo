@@ -5,8 +5,6 @@ import '../../config/app_theme.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
 import '../profile/user_profile_screen.dart';
-import '../team/team_management_screen.dart';
-import '../tournament/tournament_detail_screen.dart';
 
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -120,22 +118,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final type = data['type'] ?? '';
     final senderId = data['senderId'] as String?;
 
-    // 大会エントリーの招待 → 大会詳細へ（承認/辞退は詳細画面のエントリーカードで行う）
-    if (type == 'entry_invite') {
-      // 取り消し済み・対応済みの招待は案内だけ出す
-      if (data['canceled'] == true || data['resolved'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(data['canceled'] == true ? 'この招待は取り消されました' : 'この招待は対応済みです'),
-          backgroundColor: AppTheme.textSecondary,
-        ));
-        return;
-      }
-      final tournamentId = (data['tournamentId'] ?? '').toString();
-      if (tournamentId.isEmpty) return;
-      await _openTournamentDetail(tournamentId);
-      return;
-    }
-
     // フォロー通知 → ユーザープロフィールへ遷移
     if (type == 'follow' && senderId != null && senderId.isNotEmpty) {
       Navigator.push(
@@ -146,33 +128,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
       );
       return;
     }
-
-    // チーム参加リクエスト → チーム管理画面へ（承認/却下はそこで行う）
-    if (type == 'team_join_request') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const TeamManagementScreen(),
-        ),
-      );
-      return;
-    }
-  }
-
-  Future<void> _openTournamentDetail(String tournamentId) async {
-    try {
-      final doc = await FirebaseFirestore.instance.collection('tournaments').doc(tournamentId).get();
-      if (!doc.exists || !mounted) return;
-      final data = doc.data()!;
-      data['id'] = doc.id;
-      Navigator.push(context, MaterialPageRoute(
-        builder: (_) => TournamentDetailScreen(tournament: data),
-      ));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('大会情報の取得に失敗しました'), backgroundColor: AppTheme.error));
-    }
   }
 
   Widget _buildNotificationItem(Map<String, dynamic> data, String docId) {
@@ -182,10 +137,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderAvatar = data['senderAvatar'] ?? '';
     final message = data['message'] ?? '';
     final bool isRead = data['read'] ?? true;
-    // 取り消し済み／対応済み（回答済み・エントリー成立）の「招待されました」通知（灰色で表示）
-    final bool isCanceledInvite = type == 'entry_invite' && data['canceled'] == true;
-    final bool isClosedInvite =
-        type == 'entry_invite' && (data['canceled'] == true || data['resolved'] == true);
     final createdAt = data['createdAt'] as Timestamp?;
 
     IconData icon;
@@ -203,27 +154,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case 'follow':
         icon = Icons.person_add;
         iconColor = AppTheme.accentColor;
-        break;
-      case 'entry_invite':
-        icon = Icons.how_to_reg;
-        iconColor = AppTheme.primaryColor;
-        break;
-      case 'entry_confirmed':
-        icon = Icons.check_circle;
-        iconColor = AppTheme.success;
-        break;
-      case 'entry_canceled':
-        icon = Icons.event_busy;
-        iconColor = AppTheme.textSecondary;
-        break;
-      case 'entry_declined':
-      case 'team_join_request':
-        icon = Icons.group_add;
-        iconColor = AppTheme.accentColor;
-        break;
-      case 'team_join_approved':
-        icon = Icons.verified;
-        iconColor = AppTheme.success;
         break;
       default:
         icon = Icons.notifications;
@@ -251,9 +181,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
         color: isRead
             ? Colors.transparent
             : AppTheme.primaryColor.withValues(alpha: 0.04),
-        child: Opacity(
-          opacity: isClosedInvite ? 0.5 : 1,
-          child: ListTile(
+        child: ListTile(
           onTap: () => _onNotificationTap(data),
           leading: Stack(
             children: [
@@ -302,29 +230,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Row(children: [
-              Text(
-                _formatTime(createdAt),
-                style: const TextStyle(
-                    fontSize: 12, color: AppTheme.textSecondary),
-              ),
-              if (isClosedInvite) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(isCanceledInvite ? '取り消し済み' : '対応済み',
-                      style: TextStyle(fontSize: 11, color: AppTheme.textSecondary, fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ]),
+            child: Text(
+              _formatTime(createdAt),
+              style: const TextStyle(
+                  fontSize: 12, color: AppTheme.textSecondary),
+            ),
           ),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        ),
         ),
       ),
     );
