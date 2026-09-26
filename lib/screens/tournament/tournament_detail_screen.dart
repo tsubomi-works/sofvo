@@ -37,6 +37,7 @@ import 'tournament_summary_download_screen.dart';
 import '../chat/chat_screen.dart';
 import '../../services/notification_service.dart';
 import '../../services/point_service.dart';
+import '../../widgets/progress_overlay.dart';
 
 class TournamentDetailScreen extends StatefulWidget {
   final Map<String, dynamic> tournament;
@@ -51,6 +52,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     with SingleTickerProviderStateMixin {
   // 承認待ちエントリー招待を「開いた（既読）」記録の二重送信防止
   final Set<String> _markedSeenDraftIds = {};
+
+  // キャプテン向け承認待ちカードのメンバー一覧展開状態（draftId単位）。
+  // 展開すると縦に長くなり大会情報が見えなくなるため、既定は折りたたみ。
+  final Set<String> _expandedEntryDrafts = {};
 
   void _markEntryDraftSeenIfNeeded(String draftId) {
     if (_markedSeenDraftIds.contains(draftId)) return;
@@ -4893,7 +4898,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
               Row(children: [
                 const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
                 const SizedBox(width: 6),
-                Text('承認待ち ${docs.length}チーム（主催者のみ表示）',
+                Text('承認待ち ${docs.length}チーム（運営者のみ表示）',
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.accentColor)),
               ]),
               const SizedBox(height: 8),
@@ -4948,13 +4953,31 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     final invited = List<String>.from((data['invitedUids'] as List<dynamic>?) ?? []);
     final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
     final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+    final memberAvatars = Map<String, dynamic>.from(data['memberAvatars'] as Map? ?? {});
+    final seenAt = Map<String, dynamic>.from(data['seenAt'] as Map? ?? {});
+    // 代理承認はサーバー側（adminApproveEntryDraftMember）で主催者・管理者のみ許可
+    // （キャプテンは当事者のため対象外）。編集者などには押しても失敗するボタンを出さない。
+    final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final canProxyApprove = _isAdmin ||
+        (myUid.isNotEmpty && myUid == (widget.tournament['organizerId'] ?? '').toString());
+    // エントリーの取り消し（cancelEntryDraft）と再通知（resendEntryInviteNotification）は
+    // サーバー側でキャプテン・主催者・管理者のみ許可。編集者には出さない。
+    final canCancel = canProxyApprove || (myUid.isNotEmpty && myUid == (data['leaderUid'] ?? '').toString());
+    final canResend = canCancel;
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      builder: (ctx) => ConstrainedBox(
+        // 画面の6割以上の高さで表示（人数が多ければ最大9割までスクロール）
+        constraints: BoxConstraints(
+          minHeight: MediaQuery.of(ctx).size.height * 0.6,
+          maxHeight: MediaQuery.of(ctx).size.height * 0.9,
+        ),
+        child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 32 + MediaQuery.of(ctx).padding.bottom),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -4962,76 +4985,225 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             Center(child: Container(width: 40, height: 4,
                 decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
             const SizedBox(height: 16),
-            Text(isMemberAdd ? '$teamName（追加メンバー承認待ち）' : teamName,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Row(children: [
+              const Icon(Icons.groups_outlined, size: 22, color: AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(isMemberAdd ? '$teamName（追加メンバー承認待ち）' : teamName,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+            ]),
             const SizedBox(height: 4),
-            Text('キャプテン: $leaderName', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            Row(children: [
+              const Icon(Icons.star_outline, size: 15, color: AppTheme.accentColor),
+              const SizedBox(width: 4),
+              Text('キャプテン: $leaderName', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            ]),
             const SizedBox(height: 16),
+            // 承認の進み具合（何人承認したらエントリー成立かが一目でわかるように）
+            _draftProgressBox(
+              approvedCount: invited.where((u) => approvals[u] == 'approved').length,
+              // 辞退した人は分母から除外（一覧カードの「承認 x/y」と揃える）
+              totalCount: invited.where((u) => approvals[u] != 'declined').length,
+            ),
+            const SizedBox(height: 12),
             ...invited.map((u) {
               final nm = (memberNames[u] ?? '?').toString();
               final st = (approvals[u] ?? 'pending').toString();
-              final label = st == 'approved' ? '承認済み' : st == 'declined' ? '辞退' : '承認待ち';
-              final c = st == 'approved'
-                  ? AppTheme.success
-                  : st == 'declined'
-                      ? AppTheme.error
-                      : AppTheme.textHint;
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => UserProfileScreen(userId: u))),
-                      child: Text(nm,
-                          style: const TextStyle(fontSize: 14, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
-                    ),
-                  ),
-                  Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
-                  if (st == 'pending') ...[
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _resendEntryInvite(draftId, u, nm);
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(Icons.notifications_active_outlined, size: 16, color: AppTheme.accentColor),
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _adminApproveEntryDraftMember(draftId, u, nm);
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(Icons.verified_outlined, size: 16, color: AppTheme.primaryColor),
-                      ),
-                    ),
-                  ],
-                ]),
+              final seen = seenAt[u] != null;
+              return _draftMemberRow(
+                uid: u,
+                name: nm,
+                avatarUrl: (memberAvatars[u] ?? '').toString(),
+                status: st,
+                // 招待を見たかどうか（大会詳細・通知・起動時ポップアップのいずれかで表示されたら既読）
+                pendingLabel: seen ? '既読・未回答' : '未読',
+                pendingColor: seen ? AppTheme.accentColor : AppTheme.textSecondary,
+                actions: st != 'pending'
+                    ? const []
+                    : [
+                        if (canResend)
+                          _resendChip(
+                            draftData: data,
+                            draftId: draftId,
+                            uid: u,
+                            name: nm,
+                            beforeSend: () => Navigator.pop(ctx),
+                          ),
+                        if (canProxyApprove)
+                          _draftActionChip(
+                            icon: Icons.verified_outlined,
+                            label: '代理承認',
+                            color: AppTheme.primaryColor,
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _adminApproveEntryDraftMember(draftId, u, nm);
+                            },
+                          ),
+                      ],
               );
             }),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
+            const SizedBox(height: 16),
+            // 誤タップ防止: 目立たない小さな文字リンク＋確認ダイアログ
+            if (canCancel)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _cancelEntryDraft(draftId);
+                  _cancelEntryDraft(draftId, teamName: teamName, byLeader: false);
                 },
-                icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
-                label: const Text('招待を取り消す', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
-                style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppTheme.error), padding: const EdgeInsets.symmetric(vertical: 12)),
+                style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                  Icon(Icons.delete_outline, size: 14, color: AppTheme.textHint),
+                  SizedBox(width: 3),
+                  Text('このエントリーを取り消す', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                ]),
               ),
             ),
           ],
         ),
+        ),
+      ),
+    );
+  }
+
+  /// 承認待ちエントリーの進捗（x / y 人＋バー）。主催者シートとキャプテンのカードで共通。
+  Widget _draftProgressBox({required int approvedCount, required int totalCount}) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.accentColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.hourglass_top, size: 16, color: AppTheme.accentColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text('全員が承認するとエントリー成立',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ),
+          Text('$approvedCount / $totalCount 人',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+        ]),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: totalCount == 0 ? 0 : approvedCount / totalCount,
+            minHeight: 6,
+            backgroundColor: Colors.grey[200],
+            valueColor: const AlwaysStoppedAnimation(AppTheme.success),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  /// 承認待ちエントリーのメンバー1行（プロフィール写真＋状態バッジ＋状態ラベル＋操作ボタン）。
+  /// [pendingLabel] を渡すと承認待ちの表示を差し替えられる（キャプテン向けの「未読」「既読・未回答」など）。
+  Widget _draftMemberRow({
+    required String uid,
+    required String name,
+    required String avatarUrl,
+    required String status,
+    String? pendingLabel,
+    Color? pendingColor,
+    List<Widget> actions = const [],
+    bool showDivider = true,
+  }) {
+    final label = status == 'approved'
+        ? '承認済み'
+        : status == 'declined'
+            ? '辞退'
+            : (pendingLabel ?? '承認待ち');
+    final c = status == 'approved'
+        ? AppTheme.success
+        : status == 'declined'
+            ? AppTheme.error
+            : (pendingColor ?? AppTheme.textSecondary);
+    final icon = status == 'approved'
+        ? Icons.check_circle
+        : status == 'declined'
+            ? Icons.cancel
+            : Icons.schedule;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: showDivider
+          ? BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!)))
+          : null,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          // プロフィールアイコン＋右下に状態バッジ
+          Stack(clipBehavior: Clip.none, children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+              backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+              child: avatarUrl.isNotEmpty
+                  ? null
+                  : Text(name.isNotEmpty ? name[0] : '?',
+                      style: const TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+            ),
+            Positioned(
+              right: -3,
+              bottom: -3,
+              child: Container(
+                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                child: Icon(icon, size: 16, color: status == 'pending' ? AppTheme.textHint : c),
+              ),
+            ),
+          ]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => UserProfileScreen(userId: uid))),
+              child: Text(name,
+                  style: const TextStyle(fontSize: 15, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: c.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+          ),
+        ]),
+        if (actions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 48, top: 6),
+            child: Wrap(spacing: 8, runSpacing: 6, children: actions),
+          ),
+      ]),
+    );
+  }
+
+  /// 承認待ちメンバーに対する操作（再通知・代理承認）の小さなボタン
+  Widget _draftActionChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+        ]),
       ),
     );
   }
@@ -6098,12 +6270,16 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           // 本人が承認するまで本物のエントリーには入らない。
                           try {
                             final callable = FirebaseFunctions.instance.httpsCallable('updateEntryMembers');
-                            final res = await callable.call({
-                              'tournamentId': _tournamentId,
-                              'entryId': entryDocId,
-                              'teamName': teamName,
-                              'memberUids': selectedMembers.keys.toList(),
-                            });
+                            final res = await runWithProgress(
+                              ctx,
+                              () => callable.call({
+                                'tournamentId': _tournamentId,
+                                'entryId': entryDocId,
+                                'teamName': teamName,
+                                'memberUids': selectedMembers.keys.toList(),
+                              }),
+                              message: '保存しています…',
+                            );
                             final added = ((res.data as Map)['added'] ?? 0) as int;
                             if (!ctx.mounted) return;
                             Navigator.pop(ctx);
@@ -6335,6 +6511,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
             final approvals = Map<String, dynamic>.from(data['approvals'] as Map? ?? {});
             final seenAt = Map<String, dynamic>.from(data['seenAt'] as Map? ?? {});
             final memberNames = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+            final memberAvatars = Map<String, dynamic>.from(data['memberAvatars'] as Map? ?? {});
             // 辞退した人は分母から除外する（辞退しても残りの有効メンバーだけで自動成立するため）
             final activeCount = invited.where((u) => approvals[u] != 'declined').length;
             final approvedCount = invited.where((u) => approvals[u] == 'approved').length;
@@ -6357,66 +6534,75 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    const Icon(Icons.how_to_reg, size: 18, color: AppTheme.primaryColor),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(isMemberAdd ? '追加メンバーの承認待ち「$teamName」' : '承認待ちエントリー「$teamName」',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
-                    ),
-                    Text('承認 $approvedCount/$activeCount',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
-                  ]),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: isLeader
+                        ? () => setState(() {
+                              if (_expandedEntryDrafts.contains(d.id)) {
+                                _expandedEntryDrafts.remove(d.id);
+                              } else {
+                                _expandedEntryDrafts.add(d.id);
+                              }
+                            })
+                        : null,
+                    child: Row(children: [
+                      const Icon(Icons.how_to_reg, size: 18, color: AppTheme.primaryColor),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(isMemberAdd ? '追加メンバーの承認待ち「$teamName」' : '承認待ちエントリー「$teamName」',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+                      ),
+                      Text('承認 $approvedCount/$activeCount',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
+                      if (isLeader) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          _expandedEntryDrafts.contains(d.id) ? Icons.expand_less : Icons.expand_more,
+                          size: 20, color: AppTheme.primaryColor,
+                        ),
+                      ],
+                    ]),
+                  ),
+                  if (isLeader && !_expandedEntryDrafts.contains(d.id)) ...[
+                    const SizedBox(height: 2),
+                    Text('タップしてメンバーの承認状況を見る',
+                        style: TextStyle(fontSize: 11, color: AppTheme.textHint)),
+                  ],
                   const SizedBox(height: 8),
                   if (isLeader) ...[
-                    // キャプテン視点：未承認メンバーの一覧＋取り消し
-                    ...invited.where((u) => u != uid).map((u) {
-                      final st = (approvals[u] ?? 'pending').toString();
-                      final nm = (memberNames[u] ?? '?').toString();
-                      final seen = seenAt[u] != null;
-                      final label = st == 'approved'
-                          ? '承認済み'
-                          : st == 'declined'
-                              ? '辞退'
-                              : (seen ? '既読・未回答' : '未読');
-                      final c = st == 'approved'
-                          ? AppTheme.success
-                          : st == 'declined'
-                              ? AppTheme.error
-                              : (seen ? AppTheme.accentColor : AppTheme.textHint);
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 3),
-                        child: Row(children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(
-                                  builder: (_) => UserProfileScreen(userId: u))),
-                              child: Text(nm,
-                                  style: const TextStyle(fontSize: 13, decoration: TextDecoration.underline, decorationColor: AppTheme.textHint)),
-                            ),
-                          ),
-                          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
-                          if (st == 'pending') ...[
-                            InkWell(
-                              onTap: () => _resendEntryInvite(d.id, u, nm),
-                              borderRadius: BorderRadius.circular(12),
-                              child: const Padding(
-                                padding: EdgeInsets.only(left: 4, top: 2, bottom: 2, right: 2),
-                                child: Icon(Icons.notifications_active_outlined, size: 15, color: AppTheme.accentColor),
-                              ),
+                    if (_expandedEntryDrafts.contains(d.id)) ...[
+                    // キャプテン視点：主催者向けシートと同じ見た目（写真・状態バッジ・進捗バー）
+                    _draftProgressBox(approvedCount: approvedCount, totalCount: activeCount),
+                    const SizedBox(height: 4),
+                    ...() {
+                      final others = invited.where((u) => u != uid).toList();
+                      return others.asMap().entries.map((e) {
+                        final u = e.value;
+                        final st = (approvals[u] ?? 'pending').toString();
+                        final nm = (memberNames[u] ?? '?').toString();
+                        final seen = seenAt[u] != null;
+                        return _draftMemberRow(
+                          uid: u,
+                          name: nm,
+                          avatarUrl: (memberAvatars[u] ?? '').toString(),
+                          status: st,
+                          // キャプテンには相手が招待を見たかどうかも出す
+                          pendingLabel: seen ? '既読・未回答' : '未読',
+                          pendingColor: seen ? AppTheme.accentColor : AppTheme.textSecondary,
+                          showDivider: e.key != others.length - 1,
+                          actions: [
+                            if (st == 'pending')
+                              _resendChip(draftData: data, draftId: d.id, uid: u, name: nm),
+                            _draftActionChip(
+                              icon: Icons.person_remove_outlined,
+                              label: 'メンバーから外す',
+                              color: AppTheme.textSecondary,
+                              onTap: () => _removeEntryDraftMember(d.id, u, nm),
                             ),
                           ],
-                          InkWell(
-                            onTap: () => _removeEntryDraftMember(d.id, u, nm),
-                            borderRadius: BorderRadius.circular(12),
-                            child: const Padding(
-                              padding: EdgeInsets.only(left: 4, top: 2, bottom: 2, right: 2),
-                              child: Icon(Icons.close, size: 16, color: AppTheme.textHint),
-                            ),
-                          ),
-                        ]),
-                      );
-                    }),
+                        );
+                      });
+                    }(),
                     const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6427,14 +6613,19 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           label: const Text('追加招待', style: TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
                         ),
-                        TextButton.icon(
-                          onPressed: () => _cancelEntryDraft(d.id),
-                          icon: const Icon(Icons.close, size: 16, color: AppTheme.error),
-                          label: const Text('招待を取り消す', style: TextStyle(fontSize: 13, color: AppTheme.error, fontWeight: FontWeight.bold)),
+                        // 誤タップ防止: 目立たない小さな文字リンク＋確認ダイアログ
+                        TextButton(
+                          onPressed: () => _cancelEntryDraft(d.id, teamName: teamName, byLeader: true),
                           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                            Icon(Icons.delete_outline, size: 14, color: AppTheme.textHint),
+                            SizedBox(width: 3),
+                            Text('エントリーを取りやめる', style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
+                          ]),
                         ),
                       ],
                     ),
+                    ],
                   ] else if (myState == 'pending') ...[
                     // 招待メンバー視点：承認 / 辞退
                     Text('${(data['leaderName'] ?? '').toString()} さんから招待されています', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
@@ -6484,7 +6675,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   Future<void> _respondEntryInvite(String draftId, bool approve) async {
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('respondEntryInvite');
-      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'approve': approve});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'approve': approve}),
+          message: approve ? '承認しています…' : '辞退しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       final memberAdd = (res.data as Map)['memberAdd'] == true;
       if (!mounted) return;
@@ -6505,13 +6698,40 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
   }
 
-  Future<void> _cancelEntryDraft(String draftId) async {
+  /// 承認待ちエントリー（ドラフト）を丸ごと取り消す。
+  /// [byLeader] true: キャプテンが自分のエントリーを取りやめる / false: 主催者・管理者が取り消す。
+  Future<void> _cancelEntryDraft(String draftId, {String teamName = '', required bool byLeader}) async {
+    final team = teamName.isNotEmpty ? '「$teamName」の' : '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(byLeader ? 'エントリーを取りやめますか？' : 'このエントリーを取り消しますか？',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        content: Text(
+          '$team承認待ちのエントリーを取り消します。\n'
+          '承認済みのメンバーの分も含めて取り消され、元に戻せません。\n\n'
+          '招待されていたメンバーには取り消しの通知が届きます。',
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('やめる')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(byLeader ? '取りやめる' : '取り消す',
+                style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('cancelEntryDraft');
-      await callable.call({'tournamentId': _tournamentId, 'draftId': draftId});
+      await runWithProgress(context, () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId}),
+          message: '取り消しています…');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('招待を取り消しました'), backgroundColor: AppTheme.textSecondary),
+          const SnackBar(content: Text('エントリーを取り消しました'), backgroundColor: AppTheme.textSecondary),
         );
       }
     } catch (_) {
@@ -6519,10 +6739,68 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     }
   }
 
+  /// 再通知のクールダウン（サーバー側 resendEntryInviteNotification と同じ1時間）。
+  static const _resendCooldown = Duration(hours: 1);
+
+  /// 最後に再通知してから1時間以内なら、あと何分かを返す（再通知できるなら null）。
+  int? _resendRemainingMinutes(Map<String, dynamic> draftData, String uid) {
+    final last = (draftData['lastResentAt'] as Map?)?[uid];
+    if (last is! Timestamp) return null;
+    final remain = _resendCooldown - DateTime.now().difference(last.toDate());
+    if (remain <= Duration.zero) return null;
+    return (remain.inSeconds / 60).ceil();
+  }
+
+  /// 再通知ボタン。1時間以内に再通知済みなら押せない表示にする。
+  Widget _resendChip({
+    required Map<String, dynamic> draftData,
+    required String draftId,
+    required String uid,
+    required String name,
+    VoidCallback? beforeSend,
+  }) {
+    final remain = _resendRemainingMinutes(draftData, uid);
+    if (remain != null) {
+      return _draftActionChip(
+        icon: Icons.notifications_paused_outlined,
+        label: '再通知済み（あと$remain分）',
+        color: AppTheme.textHint,
+        onTap: null,
+      );
+    }
+    return _draftActionChip(
+      icon: Icons.notifications_active_outlined,
+      label: '再通知',
+      color: AppTheme.accentColor,
+      onTap: () {
+        beforeSend?.call();
+        _resendEntryInvite(draftId, uid, name);
+      },
+    );
+  }
+
   Future<void> _resendEntryInvite(String draftId, String targetUid, String targetName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('再通知しますか？', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        content: Text('$targetName さんに、参加の承認をお願いする通知をもう一度送ります。\n\n再通知は1時間に1回までです。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('やめる')),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('再通知する', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('resendEntryInviteNotification');
-      await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid}),
+          message: '再通知しています…');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('$targetName さんに招待を再通知しました'),
@@ -6549,10 +6827,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('adminApproveEntryDraftMember');
-      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid}),
+          message: '承認しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -6581,10 +6861,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('removeEntryDraftMember');
-      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid}),
+          message: '取り消しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -6646,16 +6928,18 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                               final callable = FirebaseFunctions.instance.httpsCallable('addEntryDraftMember');
                               var okCount = 0;
                               String? lastError;
-                              for (final entry in targets.entries) {
-                                try {
-                                  await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': entry.key});
-                                  okCount++;
-                                } on FirebaseFunctionsException catch (e) {
-                                  lastError = e.message;
-                                } catch (_) {
-                                  lastError = '追加に失敗しました';
+                              await runWithProgress(ctx, () async {
+                                for (final entry in targets.entries) {
+                                  try {
+                                    await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': entry.key});
+                                    okCount++;
+                                  } on FirebaseFunctionsException catch (e) {
+                                    lastError = e.message;
+                                  } catch (_) {
+                                    lastError = '追加に失敗しました';
+                                  }
                                 }
-                              }
+                              }, message: '招待を送信しています…');
                               if (!ctx.mounted) return;
                               Navigator.pop(ctx);
                               if (mounted) {
@@ -6732,17 +7016,21 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       ),
     );
 
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     // 承認制：本物のエントリーは作らず、招待（entryDraft）を作成する。
     // 重複チェック・名前収集・通知はサーバー側（createEntryDraft）で行う。
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('createEntryDraft');
-      await callable.call({
-        'tournamentId': _tournamentId,
-        'teamName': teamName,
-        'memberUids': members.keys.toList(),
-      });
+      await runWithProgress(
+        context,
+        () => callable.call({
+          'tournamentId': _tournamentId,
+          'teamName': teamName,
+          'memberUids': members.keys.toList(),
+        }),
+        message: 'エントリーを送信しています…',
+      );
       if (mounted) Navigator.pop(sheetContext);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

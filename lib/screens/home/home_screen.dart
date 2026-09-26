@@ -7,6 +7,7 @@ import '../../services/push_notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -174,6 +175,15 @@ class _HomeScreenState extends State<HomeScreen>
     final tournamentById = {
       for (var i = 0; i < tournamentIds.length; i++) tournamentIds[i]: tournamentDocs[i],
     };
+
+    // 起動時ポップアップに表示される＝招待を見たので既読にする（失敗しても無視）
+    for (final d in pending) {
+      if ((d.data()['seenAt'] as Map?)?[uid] != null) continue;
+      FirebaseFunctions.instance.httpsCallable('markEntryDraftSeen').call({
+        'tournamentId': d.reference.parent.parent!.id,
+        'draftId': d.id,
+      }).then<void>((_) {}, onError: (_) {});
+    }
 
     return pending.map((d) {
       final data = d.data();
@@ -1966,18 +1976,29 @@ class _HomeScreenState extends State<HomeScreen>
                 color = AppTheme.error;
                 title = '残りわずか';
                 break;
+              case 'entry_invite':
+                icon = Icons.how_to_reg;
+                color = AppTheme.primaryColor;
+                title = '大会エントリー招待';
+                break;
               default:
                 icon = Icons.info_outline;
                 color = AppTheme.primaryColor;
                 title = 'お知らせ';
             }
+            // entry_invite の message は「が大会「X」に招待しました」のように
+            // 送信者名に続く体言止めなので、ここで名前を補って読める文にする
+            final senderName = (data['senderName'] ?? '').toString();
+            final body = type == 'entry_invite' && senderName.isNotEmpty
+                ? '$senderName ${data['message'] ?? ''}'
+                : (data['message'] ?? '').toString();
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _buildOfficialNotice(
                 icon: icon,
                 color: color,
                 title: title,
-                body: data['message'] ?? '',
+                body: body,
                 time: _formatTime(data['createdAt'] as Timestamp?),
                 isRead: isRead,
                 onTap: () => _onAnnouncementTap(data),
@@ -2067,12 +2088,21 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
+    if (type == 'entry_invite' && (data['canceled'] == true || data['resolved'] == true)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(data['canceled'] == true ? 'この招待は取り消されました' : 'この招待は対応済みです'),
+        backgroundColor: AppTheme.textSecondary,
+      ));
+      return;
+    }
+
     if ((type == 'tournament_announcement' ||
             type == 'waitlist_available' ||
             type == 'points_earned' ||
             type == 'tournament_created' ||
             type == 'deadline_approaching' ||
-            type == 'slots_low') &&
+            type == 'slots_low' ||
+            type == 'entry_invite') &&
         tournamentId != null &&
         tournamentId.isNotEmpty) {
       try {

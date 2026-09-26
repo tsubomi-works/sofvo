@@ -3566,10 +3566,14 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
     } catch (e) { /* noop */ }
   }
 
+  // 回答した本人の招待通知は「対応済み」にする
+  await markEntryInviteNotifications(db, [uid], draftId, { resolved: true });
+
   return { finalized: result.finalized, declined: !!result.declined, memberAdd: !!result.memberAdd };
 });
 
-// キャプテン・主催者・管理者が、招待された本人に代わって承認する（最終手段）。
+// 主催者・管理者が、招待された本人に代わって承認する（最終手段）。
+// キャプテンは当事者（チームを揃えたい側）で本人の同意なしに参加させられてしまうため対象外。
 // 本人がアカウント不整合やアプリ不具合等でどうしても自分で承認できない場合の
 // 救済用。respondEntryInvite(approve: true) と同じ成立ロジックを流用するが、
 // 呼び出し元が「本人以外」である点が異なるため、誰がいつ代理承認したかを
@@ -3596,8 +3600,8 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
   const draftPre = draftSnapPre.data() || {};
   const organizerId = (tSnapPre.data() || {}).organizerId;
   const isAdmin = callerSnap.data()?.isAdmin === true;
-  if (draftPre.leaderUid !== callerUid && organizerId !== callerUid && !isAdmin) {
-    throw new functions.https.HttpsError("permission-denied", "代理承認できるのはキャプテン・主催者・管理者のみです");
+  if (organizerId !== callerUid && !isAdmin) {
+    throw new functions.https.HttpsError("permission-denied", "代理承認できるのは主催者・管理者のみです");
   }
   const callerName = (callerSnap.data() || {}).nickname || "管理者";
 
@@ -3727,6 +3731,9 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
   } else if (result.finalized && result.memberAdd) {
     await followOrganizerForEntrants(db, tournamentId, [targetUid]);
   }
+
+  // 代理承認された本人の招待通知も「対応済み」にする
+  await markEntryInviteNotifications(db, [targetUid], draftId, { resolved: true });
 
   return { approved: true, finalized: !!result.finalized, teamName: result.teamName };
 });
@@ -3886,6 +3893,32 @@ exports.updateEntryMembers = functions.https.onCall(async (data, context) => {
 });
 
 // 承認待ちエントリー（ドラフト）の取り消し（キャプテン本人 or 主催者）
+// 承認待ちエントリーの「招待されました」通知（entry_invite）に状態フラグを付ける。
+// 通知一覧で「取り消し済み」「対応済み」と表示し、タップしても承認/辞退ダイアログを出さないため。
+//   fields = { canceled: true } … エントリーが取り消された／メンバーから外された
+//   fields = { resolved: true } … 本人が回答済み、またはエントリーが成立した
+async function markEntryInviteNotifications(db, uids, draftId, fields) {
+  await Promise.all(uids.map(async (u) => {
+    try {
+      const qs = await db.collection("users").doc(u).collection("notifications")
+        .where("type", "==", "entry_invite").where("draftId", "==", draftId).get();
+      await Promise.all(qs.docs.map((d) => d.ref.update(fields)));
+    } catch (e) { console.error("[markEntryInviteNotifications] failed:", u, e); }
+  }));
+}
+
+// 承認待ちドラフトが消えた（成立・取り消し・辞退による自動成立など、どの経路でも）
+// → 招待されていた全員の招待通知を「対応済み」にする。取り消しの場合は cancelEntryDraft 側で
+//   canceled も付けており、アプリは canceled を優先して「取り消し済み」と表示する。
+exports.onEntryDraftDeleted = functions.firestore
+  .document("tournaments/{tournamentId}/entryDrafts/{draftId}")
+  .onDelete(async (snap, context) => {
+    const draft = snap.data() || {};
+    const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+    await markEntryInviteNotifications(admin.firestore(), invited, context.params.draftId, { resolved: true });
+    return null;
+  });
+
 exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
   const uid = context.auth.uid;
@@ -3898,11 +3931,38 @@ exports.cancelEntryDraft = functions.https.onCall(async (data, context) => {
   const snap = await draftRef.get();
   if (!snap.exists) return { canceled: true };
   const draft = snap.data() || {};
-  const organizerId = ((await tRef.get()).data() || {}).organizerId;
-  if (draft.leaderUid !== uid && organizerId !== uid) {
-    throw new functions.https.HttpsError("permission-denied", "取り消せるのはキャプテンまたは主催者のみです");
+  const [tSnap, callerSnap] = await Promise.all([tRef.get(), db.collection("users").doc(uid).get()]);
+  const tData = tSnap.data() || {};
+  const isLeader = draft.leaderUid === uid;
+  const isAdmin = callerSnap.data()?.isAdmin === true;
+  if (!isLeader && tData.organizerId !== uid && !isAdmin) {
+    throw new functions.https.HttpsError("permission-denied", "取り消せるのはキャプテン・主催者・管理者のみです");
   }
   await draftRef.delete();
+
+  // 招待されていたメンバー全員（取り消した本人以外）に知らせる。
+  // 以前は通知が無く、承認待ちの表示が黙って消えるだけだった。
+  const teamName = draft.teamName || "";
+  const isMemberAdd = draft.type === "memberAdd";
+  const what = isMemberAdd ? `チーム「${teamName}」へのメンバー追加` : `チーム「${teamName}」のエントリー`;
+  const callerData = callerSnap.data() || {};
+  // 主催者でない管理者が取り消した場合は個人名を出さず「Sofvo運営」とする
+  const senderName = (isLeader || tData.organizerId === uid) ? (callerData.nickname || "メンバー") : "Sofvo運営";
+  const senderAvatar = (isLeader || tData.organizerId === uid) ? (callerData.avatarUrl || "") : "";
+  const tLabel = tData.title ? `大会「${tData.title}」の` : "";
+  const invited = Array.isArray(draft.invitedUids) ? draft.invitedUids : [];
+  await Promise.all(invited.filter((u) => u !== uid).map(async (u) => {
+    try {
+      await db.collection("users").doc(u).collection("notifications").add({
+        type: "entry_canceled",
+        tournamentId, tournamentName: tData.title || "", teamName,
+        senderId: uid, senderName, senderAvatar,
+        message: isLeader ? `が${tLabel}${what}を取りやめました` : `が${tLabel}${what}を取り消しました`,
+        read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) { console.error("[cancelEntryDraft] notify failed:", u, e); }
+  }));
+  await markEntryInviteNotifications(db, invited, draftId, { canceled: true });
   return { canceled: true };
 });
 
@@ -4027,6 +4087,9 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
       } catch (e) { console.error("[removeEntryDraftMember] notify failed:", e); }
     }));
   }
+
+  // 外されたメンバーの「招待されました」通知を取り消し済みにする
+  await markEntryInviteNotifications(db, [targetUid], draftId, { canceled: true });
 
   return { removed: true, teamName: result.teamName, targetName: result.targetName, finalized: !!result.finalized };
 });
@@ -5015,6 +5078,23 @@ exports.resendEntryInviteNotification = functions.https.onCall(async (data, cont
     throw new functions.https.HttpsError("failed-precondition", "既に承認済みです（再通知の必要はありません）");
   }
 
+  // 連打防止: 同じメンバーへの再通知は1時間に1回まで（プッシュ通知が何度も飛ぶのを防ぐ）
+  const RESEND_COOLDOWN_MS = 60 * 60 * 1000;
+  // 連打で同時に呼ばれても1回しか通らないよう、判定と記録をトランザクションで行う
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(draftRef);
+    if (!cur.exists) throw new functions.https.HttpsError("not-found", "招待が見つかりません");
+    const last = ((cur.data() || {}).lastResentAt || {})[targetUid];
+    const lastMs = last && typeof last.toMillis === "function" ? last.toMillis() : 0;
+    const elapsed = Date.now() - lastMs;
+    if (lastMs && elapsed < RESEND_COOLDOWN_MS) {
+      const remainMin = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 60000);
+      throw new functions.https.HttpsError("resource-exhausted",
+        `再通知は1時間に1回までです（あと${remainMin}分で再通知できます）`);
+    }
+    tx.update(draftRef, { [`lastResentAt.${targetUid}`]: admin.firestore.Timestamp.now() });
+  });
+
   const tName = (tSnap.data() || {}).title || "";
   const leaderUid = draft.leaderUid || "";
   await db.collection("users").doc(targetUid).collection("notifications").add({
@@ -5026,7 +5106,8 @@ exports.resendEntryInviteNotification = functions.https.onCall(async (data, cont
     senderId: leaderUid,
     senderName: draft.leaderName || "",
     senderAvatar: (draft.memberAvatars || {})[leaderUid] || "",
-    message: `が大会「${tName}」のチーム「${draft.teamName}」に招待しました`,
+    message: `が大会「${tName}」のチーム「${draft.teamName}」への参加承認を待っています`,
+    resend: true,
     read: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -5329,6 +5410,11 @@ exports.onNotificationCreatedPush = functions.firestore
       official: "official",
       team_join: "team",
       team_leave: "team",
+      entry_canceled: "tournament",
+      // 大会エントリーの招待（再通知・追加招待も同じ type）と、その結果（成立・辞退）
+      entry_invite: "tournament",
+      entry_confirmed: "tournament",
+      entry_declined: "tournament",
     };
 
     const settingKey = settingKeyMap[notifType];
@@ -5368,11 +5454,22 @@ exports.onNotificationCreatedPush = functions.firestore
       case "team_leave":
         title = "チーム";
         break;
+      case "entry_invite":
+        title = data.resend ? "大会エントリーへの招待（再通知）" : "大会エントリーへの招待";
+        break;
+      case "entry_confirmed":
+        title = "大会エントリー成立";
+        break;
+      case "entry_declined":
+      case "entry_canceled":
+        title = "大会エントリー";
+        break;
       default:
         title = "Sofvo";
     }
 
-    const body = senderName ? `${senderName}${message}` : message;
+    // 送信者が「システム」の通知は本文に送信者名を付けない（「システムチーム…」のようになるため）
+    const body = (senderName && senderName !== "システム") ? `${senderName}${message}` : message;
 
     // 遷移先データ
     const navData = { type: notifType };

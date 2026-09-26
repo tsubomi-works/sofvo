@@ -122,6 +122,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     // 大会エントリーの招待 → 大会詳細へ（承認/辞退は詳細画面のエントリーカードで行う）
     if (type == 'entry_invite') {
+      // 取り消し済み・対応済みの招待は案内だけ出す
+      if (data['canceled'] == true || data['resolved'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(data['canceled'] == true ? 'この招待は取り消されました' : 'この招待は対応済みです'),
+          backgroundColor: AppTheme.textSecondary,
+        ));
+        return;
+      }
       final tournamentId = (data['tournamentId'] ?? '').toString();
       if (tournamentId.isEmpty) return;
       await _openTournamentDetail(tournamentId);
@@ -174,6 +182,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderAvatar = data['senderAvatar'] ?? '';
     final message = data['message'] ?? '';
     final bool isRead = data['read'] ?? true;
+    // 取り消し済み／対応済み（回答済み・エントリー成立）の「招待されました」通知（灰色で表示）
+    final bool isCanceledInvite = type == 'entry_invite' && data['canceled'] == true;
+    final bool isClosedInvite =
+        type == 'entry_invite' && (data['canceled'] == true || data['resolved'] == true);
     final createdAt = data['createdAt'] as Timestamp?;
 
     IconData icon;
@@ -199,6 +211,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case 'entry_confirmed':
         icon = Icons.check_circle;
         iconColor = AppTheme.success;
+        break;
+      case 'entry_canceled':
+        icon = Icons.event_busy;
+        iconColor = AppTheme.textSecondary;
         break;
       case 'entry_declined':
       case 'team_join_request':
@@ -235,7 +251,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         color: isRead
             ? Colors.transparent
             : AppTheme.primaryColor.withValues(alpha: 0.04),
-        child: ListTile(
+        child: Opacity(
+          opacity: isClosedInvite ? 0.5 : 1,
+          child: ListTile(
           onTap: () => _onNotificationTap(data),
           leading: Stack(
             children: [
@@ -284,14 +302,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              _formatTime(createdAt),
-              style: const TextStyle(
-                  fontSize: 12, color: AppTheme.textSecondary),
-            ),
+            child: Row(children: [
+              Text(
+                _formatTime(createdAt),
+                style: const TextStyle(
+                    fontSize: 12, color: AppTheme.textSecondary),
+              ),
+              if (isClosedInvite) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(isCanceledInvite ? '取り消し済み' : '対応済み',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textSecondary, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ]),
           ),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        ),
         ),
       ),
     );
