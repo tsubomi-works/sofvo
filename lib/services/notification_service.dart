@@ -3,18 +3,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class NotificationService {
   static final _firestore = FirebaseFirestore.instance;
 
-  /// 通知（ベルアイコン）に表示する対人アクション系タイプ
-  static const actionTypes = ['like', 'comment', 'follow', 'team_join', 'team_leave', 'team_join_request', 'team_join_approved', 'entry_invite', 'entry_confirmed', 'entry_declined', 'entry_canceled'];
+  /// 通知（ベルアイコン）に表示するタイプ — 消えても実害のない軽い社交的な通知のみ。
+  /// チーム参加やエントリーなど「対応が必要」「状態の記録」系は announcementTypes 側へ。
+  static const actionTypes = ['like', 'comment', 'follow'];
 
-  /// お知らせタブに表示する大会・システム系タイプ
+  /// お知らせタブ「あなた宛」に表示するタイプ — 大会・チームの状況変化の記録。
+  /// フォロー中の人の大会開催、エントリーの招待/成立/辞退/取り消し、チーム参加の
+  /// リクエスト/承認など「見失うと困る」ものをまとめる。
   ///
-  /// entry_invite 等のエントリー系はここに含めない。actionTypes と
-  /// announcementTypes は同じ notifications ドキュメントの `read` フィールドを
-  /// 共有しており、一方の画面を開くと whereIn に含まれる型はまとめて既読化
-  /// される。entry_invite を両方に入れると、ベルを開いただけで「あなた宛」側も
-  /// 既読になってしまい未読バッジも二重にカウントされる（実際に確認して撤回した）。
-  /// 招待の見逃し対策は entryDrafts を直接見る起動時ポップアップ（home_screen の
-  /// _checkPendingActionItems）が別途あるため、通知の重複掲載は不要。
+  /// actionTypes とは互いに排他（同じ型を両方に入れない）。同じ notifications
+  /// ドキュメントの `read` フィールドを共有しているため、両方に入れると
+  /// 片方の画面を開いただけでもう片方も既読化され、未読バッジも二重に
+  /// カウントされてしまう（実際に確認して撤回した経緯がある）。
   static const announcementTypes = [
     'tournament_announcement',
     'tournament_end',
@@ -24,6 +24,14 @@ class NotificationService {
     'deadline_approaching',
     'slots_low',
     'official',
+    'entry_invite',
+    'entry_confirmed',
+    'entry_declined',
+    'entry_canceled',
+    'team_join',
+    'team_leave',
+    'team_join_request',
+    'team_join_approved',
   ];
 
   static Future<void> sendLikeNotification({

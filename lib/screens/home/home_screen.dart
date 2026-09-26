@@ -1980,6 +1980,46 @@ class _HomeScreenState extends State<HomeScreen>
                 color = AppTheme.error;
                 title = '残りわずか';
                 break;
+              case 'entry_invite':
+                icon = Icons.how_to_reg;
+                color = AppTheme.primaryColor;
+                title = 'エントリー招待';
+                break;
+              case 'entry_confirmed':
+                icon = Icons.check_circle;
+                color = AppTheme.success;
+                title = 'エントリー成立';
+                break;
+              case 'entry_declined':
+                icon = Icons.group_off;
+                color = AppTheme.error;
+                title = 'エントリー辞退';
+                break;
+              case 'entry_canceled':
+                icon = Icons.event_busy;
+                color = AppTheme.textSecondary;
+                title = 'エントリー取り消し';
+                break;
+              case 'team_join':
+                icon = Icons.group_add;
+                color = AppTheme.success;
+                title = 'チーム参加';
+                break;
+              case 'team_leave':
+                icon = Icons.logout;
+                color = AppTheme.textSecondary;
+                title = 'チーム脱退';
+                break;
+              case 'team_join_request':
+                icon = Icons.person_add_alt;
+                color = AppTheme.primaryColor;
+                title = 'チーム参加リクエスト';
+                break;
+              case 'team_join_approved':
+                icon = Icons.verified;
+                color = AppTheme.success;
+                title = 'チーム参加承認';
+                break;
               default:
                 icon = Icons.info_outline;
                 color = AppTheme.primaryColor;
@@ -1992,6 +2032,19 @@ class _HomeScreenState extends State<HomeScreen>
             final senderName = (data['senderName'] ?? '').toString();
             final senderAvatar = (data['senderAvatar'] ?? '').toString();
             final hasSender = senderId.isNotEmpty && senderId != 'system' && senderName.isNotEmpty;
+            // 「が〜しました」の続き文で本文が書かれているタイプは、差出人名を
+            // 太字で頭に足してあげないと文として読めない（entry_invite の
+            // message は "が大会「X」に招待しました" のような形になっている）
+            const continuationTypes = {
+              'entry_invite',
+              'entry_confirmed',
+              'entry_declined',
+              'entry_canceled',
+              'team_join',
+              'team_leave',
+              'team_join_request',
+            };
+            final emphasizeSenderName = hasSender && continuationTypes.contains(type);
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _buildOfficialNotice(
@@ -2003,6 +2056,7 @@ class _HomeScreenState extends State<HomeScreen>
                 isRead: isRead,
                 senderName: hasSender ? senderName : null,
                 senderAvatar: hasSender && senderAvatar.isNotEmpty ? senderAvatar : null,
+                emphasizeSenderName: emphasizeSenderName,
                 onTap: () => _onAnnouncementTap(data),
               ),
             );
@@ -2095,7 +2149,11 @@ class _HomeScreenState extends State<HomeScreen>
             type == 'points_earned' ||
             type == 'tournament_created' ||
             type == 'deadline_approaching' ||
-            type == 'slots_low') &&
+            type == 'slots_low' ||
+            type == 'entry_invite' ||
+            type == 'entry_confirmed' ||
+            type == 'entry_declined' ||
+            type == 'entry_canceled') &&
         tournamentId != null &&
         tournamentId.isNotEmpty) {
       try {
@@ -2121,6 +2179,18 @@ class _HomeScreenState extends State<HomeScreen>
       } catch (e) {
         debugPrint('大会遷移に失敗: $e');
       }
+      return;
+    }
+
+    if (type == 'team_join_request' ||
+        type == 'team_join_approved' ||
+        type == 'team_join' ||
+        type == 'team_leave') {
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const TeamManagementScreen()),
+      );
     }
   }
 
@@ -2155,6 +2225,7 @@ class _HomeScreenState extends State<HomeScreen>
     String? linkLabel,
     String? senderName,
     String? senderAvatar,
+    bool emphasizeSenderName = false,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -2233,10 +2304,26 @@ class _HomeScreenState extends State<HomeScreen>
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(body,
-                      style: const TextStyle(
-                          fontSize: 14,
-                          color: AppTheme.textSecondary)),
+                  (emphasizeSenderName && senderName != null && senderName.isNotEmpty)
+                      ? RichText(
+                          text: TextSpan(
+                            style: const TextStyle(
+                                fontSize: 14, color: AppTheme.textSecondary),
+                            children: [
+                              TextSpan(
+                                text: senderName,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.textPrimary),
+                              ),
+                              TextSpan(text: ' $body'),
+                            ],
+                          ),
+                        )
+                      : Text(body,
+                          style: const TextStyle(
+                              fontSize: 14,
+                              color: AppTheme.textSecondary)),
                   if (link != null && link.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Builder(builder: (_) {
