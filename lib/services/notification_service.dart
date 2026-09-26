@@ -7,8 +7,9 @@ class NotificationService {
   static const actionTypes = ['like', 'comment', 'follow', 'team_join', 'team_leave', 'team_join_request', 'team_join_approved', 'entry_invite', 'entry_confirmed', 'entry_declined', 'entry_canceled'];
 
   /// お知らせタブに表示する大会・システム系タイプ
-  /// （entry_invite はベルアイコンにも出るが、削除しても見失わないよう
-  /// 「あなた宛」タブにも残す）
+  /// （entry_invite/entry_confirmed/entry_declined/entry_canceled はベル
+  /// アイコンにも出るが、大会エントリーの状態変化は見失うと実害があるため
+  /// 一連のライフサイクル通知として「あなた宛」タブにも残す）
   static const announcementTypes = [
     'tournament_announcement',
     'tournament_end',
@@ -19,6 +20,9 @@ class NotificationService {
     'slots_low',
     'official',
     'entry_invite',
+    'entry_confirmed',
+    'entry_declined',
+    'entry_canceled',
   ];
 
   static Future<void> sendLikeNotification({

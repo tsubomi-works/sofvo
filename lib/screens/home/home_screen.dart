@@ -1985,6 +1985,21 @@ class _HomeScreenState extends State<HomeScreen>
                 color = AppTheme.primaryColor;
                 title = '大会エントリー招待';
                 break;
+              case 'entry_confirmed':
+                icon = Icons.check_circle;
+                color = AppTheme.success;
+                title = 'エントリー成立';
+                break;
+              case 'entry_declined':
+                icon = Icons.group_off;
+                color = AppTheme.textSecondary;
+                title = 'エントリー辞退';
+                break;
+              case 'entry_canceled':
+                icon = Icons.event_busy;
+                color = AppTheme.textSecondary;
+                title = 'エントリー取り消し';
+                break;
               default:
                 icon = Icons.info_outline;
                 color = AppTheme.primaryColor;
@@ -2010,7 +2025,11 @@ class _HomeScreenState extends State<HomeScreen>
                 isRead: isRead,
                 senderName: hasSender ? senderName : null,
                 senderAvatar: hasSender && senderAvatar.isNotEmpty ? senderAvatar : null,
-                emphasizeSenderName: type == 'entry_invite',
+                emphasizeSenderName: hasSender &&
+                    (type == 'entry_invite' ||
+                        type == 'entry_confirmed' ||
+                        type == 'entry_declined' ||
+                        type == 'entry_canceled'),
                 onTap: () => _onAnnouncementTap(data),
               ),
             );
@@ -2112,7 +2131,10 @@ class _HomeScreenState extends State<HomeScreen>
             type == 'tournament_created' ||
             type == 'deadline_approaching' ||
             type == 'slots_low' ||
-            type == 'entry_invite') &&
+            type == 'entry_invite' ||
+            type == 'entry_confirmed' ||
+            type == 'entry_declined' ||
+            type == 'entry_canceled') &&
         tournamentId != null &&
         tournamentId.isNotEmpty) {
       try {
