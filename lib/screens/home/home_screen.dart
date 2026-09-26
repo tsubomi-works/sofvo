@@ -1987,20 +1987,21 @@ class _HomeScreenState extends State<HomeScreen>
                 title = 'お知らせ';
             }
             // entry_invite の message は「が大会「X」に招待しました」のように
-            // 送信者名に続く体言止めなので、ここで名前を補って読める文にする
-            final senderName = (data['senderName'] ?? '').toString();
-            final body = type == 'entry_invite' && senderName.isNotEmpty
-                ? '$senderName ${data['message'] ?? ''}'
-                : (data['message'] ?? '').toString();
+            // 送信者名に続く体言止めなので、誰からの招待か一目でわかるよう
+            // アバター＋太字の名前を添える
+            final senderName = type == 'entry_invite' ? (data['senderName'] ?? '').toString() : '';
+            final senderAvatar = type == 'entry_invite' ? (data['senderAvatar'] ?? '').toString() : '';
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _buildOfficialNotice(
                 icon: icon,
                 color: color,
                 title: title,
-                body: body,
+                body: (data['message'] ?? '').toString(),
                 time: _formatTime(data['createdAt'] as Timestamp?),
                 isRead: isRead,
+                senderName: senderName.isNotEmpty ? senderName : null,
+                senderAvatar: senderAvatar.isNotEmpty ? senderAvatar : null,
                 onTap: () => _onAnnouncementTap(data),
               ),
             );
@@ -2160,6 +2161,8 @@ class _HomeScreenState extends State<HomeScreen>
     bool isPinned = false,
     String? link,
     String? linkLabel,
+    String? senderName,
+    String? senderAvatar,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -2184,15 +2187,39 @@ class _HomeScreenState extends State<HomeScreen>
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 22),
-            ),
+            (senderName != null && senderName.isNotEmpty)
+                // 差出人がいる通知（招待など）は、誰からかが一目でわかるようアバター＋種類バッジにする
+                ? Stack(clipBehavior: Clip.none, children: [
+                    (senderAvatar != null && senderAvatar.isNotEmpty)
+                        ? CircleAvatar(
+                            radius: 20,
+                            backgroundImage: NetworkImage(senderAvatar),
+                          )
+                        : CircleAvatar(
+                            radius: 20,
+                            backgroundColor: color.withValues(alpha: 0.12),
+                            child: Text(senderName[0],
+                                style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+                          ),
+                    Positioned(
+                      bottom: -2,
+                      right: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                        child: Icon(icon, size: 14, color: color),
+                      ),
+                    ),
+                  ])
+                : Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(icon, color: color, size: 22),
+                  ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -2214,10 +2241,20 @@ class _HomeScreenState extends State<HomeScreen>
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(body,
-                      style: const TextStyle(
-                          fontSize: 14,
-                          color: AppTheme.textSecondary)),
+                  (senderName != null && senderName.isNotEmpty)
+                      ? RichText(
+                          text: TextSpan(
+                            style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+                            children: [
+                              TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                              TextSpan(text: ' $body'),
+                            ],
+                          ),
+                        )
+                      : Text(body,
+                          style: const TextStyle(
+                              fontSize: 14,
+                              color: AppTheme.textSecondary)),
                   if (link != null && link.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Builder(builder: (_) {
