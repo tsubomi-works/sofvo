@@ -7,9 +7,14 @@ class NotificationService {
   static const actionTypes = ['like', 'comment', 'follow', 'team_join', 'team_leave', 'team_join_request', 'team_join_approved', 'entry_invite', 'entry_confirmed', 'entry_declined', 'entry_canceled'];
 
   /// お知らせタブに表示する大会・システム系タイプ
-  /// （entry_invite/entry_confirmed/entry_declined/entry_canceled はベル
-  /// アイコンにも出るが、大会エントリーの状態変化は見失うと実害があるため
-  /// 一連のライフサイクル通知として「あなた宛」タブにも残す）
+  ///
+  /// entry_invite 等のエントリー系はここに含めない。actionTypes と
+  /// announcementTypes は同じ notifications ドキュメントの `read` フィールドを
+  /// 共有しており、一方の画面を開くと whereIn に含まれる型はまとめて既読化
+  /// される。entry_invite を両方に入れると、ベルを開いただけで「あなた宛」側も
+  /// 既読になってしまい未読バッジも二重にカウントされる（実際に確認して撤回した）。
+  /// 招待の見逃し対策は entryDrafts を直接見る起動時ポップアップ（home_screen の
+  /// _checkPendingActionItems）が別途あるため、通知の重複掲載は不要。
   static const announcementTypes = [
     'tournament_announcement',
     'tournament_end',
@@ -19,10 +24,6 @@ class NotificationService {
     'deadline_approaching',
     'slots_low',
     'official',
-    'entry_invite',
-    'entry_confirmed',
-    'entry_declined',
-    'entry_canceled',
   ];
 
   static Future<void> sendLikeNotification({
