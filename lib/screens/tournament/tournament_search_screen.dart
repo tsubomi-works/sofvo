@@ -6,6 +6,7 @@ import '../../config/app_theme.dart';
 import '../../widgets/empty_state_view.dart';
 import '../../widgets/official_badge.dart';
 import '../../widgets/certified_badge.dart';
+import '../../widgets/sponsor_banner.dart';
 import '../../services/bookmark_notification_service.dart';
 import '../../utils/tournament_status.dart';
 import 'tournament_detail_screen.dart';
@@ -1334,11 +1335,18 @@ class _TournamentSearchScreenState extends State<TournamentSearchScreen>
           child: ListView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.fromLTRB(16, 12, 16, 92 + MediaQuery.of(context).padding.bottom),
-            itemCount: filtered.length,
-            itemBuilder: (ctx, i) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _buildTournamentCard(filtered[i]),
-            ),
+            itemCount: filtered.length + 1,
+            itemBuilder: (ctx, i) {
+              // 先頭にスポンサー広告（表示位置「大会一覧」「全画面」。該当なしなら高さ0）
+              if (i == 0) {
+                return const SponsorBanner(
+                    placement: 'tournament_list', horizontalPadding: 0);
+              }
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _buildTournamentCard(filtered[i - 1]),
+              );
+            },
           ),
         );
       },
