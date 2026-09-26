@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../config/app_theme.dart';
+import '../../widgets/progress_overlay.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
 import '../profile/user_profile_screen.dart';
@@ -200,11 +201,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
         ],
       ),
     );
-    if (approve == null) return;
+    if (approve == null || !mounted) return;
 
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('respondEntryInvite');
-      final res = await callable.call({'tournamentId': tournamentId, 'draftId': draftId, 'approve': approve});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': tournamentId, 'draftId': draftId, 'approve': approve}),
+          message: approve ? '承認しています…' : '辞退しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       final memberAdd = (res.data as Map)['memberAdd'] == true;
       if (!mounted) return;

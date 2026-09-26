@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../config/app_theme.dart';
+import '../../widgets/progress_overlay.dart';
 import '../../widgets/invite_share_sheet.dart';
 import 'team_detail_screen.dart';
 import '../chat/chat_screen.dart';
@@ -469,7 +470,9 @@ class _TeamManagementScreenState extends State<TeamManagementScreen> {
   Future<void> _respondJoinRequest(String teamId, String applicantUid, String applicantName, bool approve) async {
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('respondTeamJoinRequest');
-      await callable.call({'teamId': teamId, 'applicantUid': applicantUid, 'approve': approve});
+      await runWithProgress(context,
+          () => callable.call({'teamId': teamId, 'applicantUid': applicantUid, 'approve': approve}),
+          message: approve ? '承認しています…' : '却下しています…');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

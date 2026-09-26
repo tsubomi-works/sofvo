@@ -37,6 +37,7 @@ import 'tournament_summary_download_screen.dart';
 import '../chat/chat_screen.dart';
 import '../../services/notification_service.dart';
 import '../../services/point_service.dart';
+import '../../widgets/progress_overlay.dart';
 
 class TournamentDetailScreen extends StatefulWidget {
   final Map<String, dynamic> tournament;
@@ -6265,12 +6266,16 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                           // 本人が承認するまで本物のエントリーには入らない。
                           try {
                             final callable = FirebaseFunctions.instance.httpsCallable('updateEntryMembers');
-                            final res = await callable.call({
-                              'tournamentId': _tournamentId,
-                              'entryId': entryDocId,
-                              'teamName': teamName,
-                              'memberUids': selectedMembers.keys.toList(),
-                            });
+                            final res = await runWithProgress(
+                              ctx,
+                              () => callable.call({
+                                'tournamentId': _tournamentId,
+                                'entryId': entryDocId,
+                                'teamName': teamName,
+                                'memberUids': selectedMembers.keys.toList(),
+                              }),
+                              message: '保存しています…',
+                            );
                             final added = ((res.data as Map)['added'] ?? 0) as int;
                             if (!ctx.mounted) return;
                             Navigator.pop(ctx);
@@ -6640,7 +6645,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   Future<void> _respondEntryInvite(String draftId, bool approve) async {
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('respondEntryInvite');
-      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'approve': approve});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'approve': approve}),
+          message: approve ? '承認しています…' : '辞退しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       final memberAdd = (res.data as Map)['memberAdd'] == true;
       if (!mounted) return;
@@ -6690,7 +6697,8 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('cancelEntryDraft');
-      await callable.call({'tournamentId': _tournamentId, 'draftId': draftId});
+      await runWithProgress(context, () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId}),
+          message: '取り消しています…');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('エントリーを取り消しました'), backgroundColor: AppTheme.textSecondary),
@@ -6760,7 +6768,9 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
     if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('resendEntryInviteNotification');
-      await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid}),
+          message: '再通知しています…');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('$targetName さんに招待を再通知しました'),
@@ -6787,10 +6797,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('adminApproveEntryDraftMember');
-      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid}),
+          message: '承認しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -6819,10 +6831,12 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('removeEntryDraftMember');
-      final res = await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid});
+      final res = await runWithProgress(context,
+          () => callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': targetUid}),
+          message: '取り消しています…');
       final finalized = (res.data as Map)['finalized'] == true;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -6884,16 +6898,18 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                               final callable = FirebaseFunctions.instance.httpsCallable('addEntryDraftMember');
                               var okCount = 0;
                               String? lastError;
-                              for (final entry in targets.entries) {
-                                try {
-                                  await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': entry.key});
-                                  okCount++;
-                                } on FirebaseFunctionsException catch (e) {
-                                  lastError = e.message;
-                                } catch (_) {
-                                  lastError = '追加に失敗しました';
+                              await runWithProgress(ctx, () async {
+                                for (final entry in targets.entries) {
+                                  try {
+                                    await callable.call({'tournamentId': _tournamentId, 'draftId': draftId, 'targetUid': entry.key});
+                                    okCount++;
+                                  } on FirebaseFunctionsException catch (e) {
+                                    lastError = e.message;
+                                  } catch (_) {
+                                    lastError = '追加に失敗しました';
+                                  }
                                 }
-                              }
+                              }, message: '招待を送信しています…');
                               if (!ctx.mounted) return;
                               Navigator.pop(ctx);
                               if (mounted) {
@@ -6970,17 +6986,21 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
       ),
     );
 
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     // 承認制：本物のエントリーは作らず、招待（entryDraft）を作成する。
     // 重複チェック・名前収集・通知はサーバー側（createEntryDraft）で行う。
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('createEntryDraft');
-      await callable.call({
-        'tournamentId': _tournamentId,
-        'teamName': teamName,
-        'memberUids': members.keys.toList(),
-      });
+      await runWithProgress(
+        context,
+        () => callable.call({
+          'tournamentId': _tournamentId,
+          'teamName': teamName,
+          'memberUids': members.keys.toList(),
+        }),
+        message: 'エントリーを送信しています…',
+      );
       if (mounted) Navigator.pop(sheetContext);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
