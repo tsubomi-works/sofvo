@@ -3356,7 +3356,7 @@ exports.createEntryDraft = functions.https.onCall(async (data, context) => {
     approvals[u] = (u === leaderUid) ? "approved" : "pending";
   }));
 
-  const tName = ((await tRef.get()).data() || {}).name || "";
+  const tName = ((await tRef.get()).data() || {}).title || "";
   const draftRef = tRef.collection("entryDrafts").doc();
   await draftRef.set({
     teamName,
@@ -3531,7 +3531,7 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
     const invited = result.activeInvited || result.draft.invitedUids || [];
     // 参加者全員に主催者フォローを付与（キャプテンは既にフォロー済みなので実質は招待メンバー分）
     await followOrganizerForEntrants(db, tournamentId, invited);
-    const tName = ((await tRef.get()).data() || {}).name || "";
+    const tName = ((await tRef.get()).data() || {}).title || "";
     try {
       await tRef.collection("timeline").add({
         authorId: "system", authorName: "システム", authorAvatar: "",
@@ -3689,7 +3689,7 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
 
   // 代理承認された本人に知らせる
   try {
-    const tName = (tSnapPre.data() || {}).name || "";
+    const tName = (tSnapPre.data() || {}).title || "";
     await db.collection("users").doc(targetUid).collection("notifications").add({
       type: "entry_confirmed",
       senderId: callerUid, senderName: callerName, senderAvatar: "",
@@ -3704,7 +3704,7 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
   if (result.finalized && !result.memberAdd) {
     const invited = result.activeInvited || [];
     await followOrganizerForEntrants(db, tournamentId, invited);
-    const tName = (tSnapPre.data() || {}).name || "";
+    const tName = (tSnapPre.data() || {}).title || "";
     try {
       await tRef.collection("timeline").add({
         authorId: "system", authorName: "システム", authorAvatar: "",
@@ -3847,7 +3847,7 @@ exports.updateEntryMembers = functions.https.onCall(async (data, context) => {
     memberNames[uid] = leaderName;
     memberAvatars[uid] = (meSnap.exists && meSnap.data().avatarUrl) || "";
 
-    const tName = ((await tRef.get()).data() || {}).name || "";
+    const tName = ((await tRef.get()).data() || {}).title || "";
     const draftRef = tRef.collection("entryDrafts").doc();
     await draftRef.set({
       type: "memberAdd",
@@ -4006,7 +4006,7 @@ exports.removeEntryDraftMember = functions.https.onCall(async (data, context) =>
   if (result.finalized) {
     const finalizedInvited = result.invited || [];
     await followOrganizerForEntrants(db, tournamentId, finalizedInvited);
-    const tName = ((await tRef.get()).data() || {}).name || "";
+    const tName = ((await tRef.get()).data() || {}).title || "";
     try {
       await tRef.collection("timeline").add({
         authorId: "system", authorName: "システム", authorAvatar: "",
@@ -4091,7 +4091,7 @@ exports.addEntryDraftMember = functions.https.onCall(async (data, context) => {
     [`memberAvatars.${targetUid}`]: targetAvatar,
   });
 
-  const tName = ((await tRef.get()).data() || {}).name || "";
+  const tName = ((await tRef.get()).data() || {}).title || "";
   try {
     await db.collection("users").doc(targetUid).collection("notifications").add({
       type: "entry_invite",
@@ -5015,7 +5015,7 @@ exports.resendEntryInviteNotification = functions.https.onCall(async (data, cont
     throw new functions.https.HttpsError("failed-precondition", "既に承認済みです（再通知の必要はありません）");
   }
 
-  const tName = (tSnap.data() || {}).name || "";
+  const tName = (tSnap.data() || {}).title || "";
   const leaderUid = draft.leaderUid || "";
   await db.collection("users").doc(targetUid).collection("notifications").add({
     type: "entry_invite",
