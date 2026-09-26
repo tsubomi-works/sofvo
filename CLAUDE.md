@@ -55,13 +55,15 @@
   1. **バージョン履歴表**（CLAUDE.md 下部）と **リリース状況**（アプリ化 進捗セクション）を「リリース済み」に更新
   2. **`syncStoreVersionsNow` にバージョン番号を指定して直接 Firestore を更新するURLをユーザーに提示し、ブラウザで開いてもらう**：
      - **iOS/Android を同じバージョンで同時に提出・リリースした場合は、両方のパラメータを必ず一緒に指定すること**
-       （片方だけ指定すると、指定しなかった側は最大48時間古い表示のままになる。今回まさにこれで一往復手戻りが発生した）：
-       ```
-       https://us-central1-sofvo-19d84.cloudfunctions.net/syncStoreVersionsNow?iosVersion=X.Y.Z&androidVersion=X.Y.Z
-       ```
-     - iOSのみ提出した場合: `?iosVersion=X.Y.Z` のみでよい（Androidは元の値のまま変わらない）
+       （片方だけ指定すると、指定しなかった側は最大48時間古い表示のままになる。今回まさにこれで一往復手戻りが発生した）
+     - **URLはコードブロックではなく、タップ／クリックできる Markdown リンク形式で提示すること**（2026-09-26 決定）:
+       [https://us-central1-sofvo-19d84.cloudfunctions.net/syncStoreVersionsNow?iosVersion=X.Y.Z&androidVersion=X.Y.Z](https://us-central1-sofvo-19d84.cloudfunctions.net/syncStoreVersionsNow?iosVersion=X.Y.Z&androidVersion=X.Y.Z)
+     - iOSのみ提出した場合: `?iosVersion=X.Y.Z` のみでよい（Androidは元の値のまま変わらない）。Androidのみの場合も同様に `?androidVersion=X.Y.Z` のみでよい
      - この環境（Claude Code on the web）からは egress プロキシの制限で直接 curl できないため、
-       **URLをユーザーに提示してブラウザで開いてもらう**運用でよい（無理に自分で叩こうとしない）
+       **URLをユーザーに提示してブラウザで開いてもらう**運用でよい（無理に自分で叩こうとしない。実測確認済み: Bash の curl・WebFetch ツールともに `us-central1-sofvo-19d84.cloudfunctions.net` への接続がプロキシの組織ポリシーで拒否される＝`EGRESS_BLOCKED`）
+     - この制限を解消したい場合は、Claude Code on the web の**環境設定のネットワークポリシー**で
+       `us-central1-sofvo-19d84.cloudfunctions.net`（または `*.cloudfunctions.net`）を許可ドメインに追加する
+       （ユーザー側の操作が必要。詳細: https://code.claude.com/docs/en/claude-code-on-the-web ）
      - 返ってきた JSON に `latestVersionIos` / `latestVersionAndroid` の両方が期待通りの値になっているか確認する
   3. コミット＆プッシュ
 
