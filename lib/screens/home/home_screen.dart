@@ -1986,11 +1986,15 @@ class _HomeScreenState extends State<HomeScreen>
                 color = AppTheme.primaryColor;
                 title = 'お知らせ';
             }
-            // entry_invite の message は「が大会「X」に招待しました」のように
-            // 送信者名に続く体言止めなので、誰からの招待か一目でわかるよう
-            // アバター＋太字の名前を添える
-            final senderName = type == 'entry_invite' ? (data['senderName'] ?? '').toString() : '';
-            final senderAvatar = type == 'entry_invite' ? (data['senderAvatar'] ?? '').toString() : '';
+            // 特定の個人・アカウントが発信元の通知（招待・募集開始など）は、
+            // 「システム」からの通知と区別してアバターを出し、誰からかを一目で
+            // わかるようにする。entry_invite の message は「が大会「X」に
+            // 招待しました」のように送信者名に続く体言止めなので、その場合だけ
+            // 名前を太字で補って読める文にする（他の型は既に名前が本文に含まれる）
+            final senderId = (data['senderId'] ?? '').toString();
+            final senderName = (data['senderName'] ?? '').toString();
+            final senderAvatar = (data['senderAvatar'] ?? '').toString();
+            final hasSender = senderId.isNotEmpty && senderId != 'system' && senderName.isNotEmpty;
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: _buildOfficialNotice(
@@ -2000,8 +2004,9 @@ class _HomeScreenState extends State<HomeScreen>
                 body: (data['message'] ?? '').toString(),
                 time: _formatTime(data['createdAt'] as Timestamp?),
                 isRead: isRead,
-                senderName: senderName.isNotEmpty ? senderName : null,
-                senderAvatar: senderAvatar.isNotEmpty ? senderAvatar : null,
+                senderName: hasSender ? senderName : null,
+                senderAvatar: hasSender && senderAvatar.isNotEmpty ? senderAvatar : null,
+                emphasizeSenderName: type == 'entry_invite',
                 onTap: () => _onAnnouncementTap(data),
               ),
             );
@@ -2163,6 +2168,7 @@ class _HomeScreenState extends State<HomeScreen>
     String? linkLabel,
     String? senderName,
     String? senderAvatar,
+    bool emphasizeSenderName = false,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -2241,7 +2247,7 @@ class _HomeScreenState extends State<HomeScreen>
                     ],
                   ),
                   const SizedBox(height: 4),
-                  (senderName != null && senderName.isNotEmpty)
+                  (emphasizeSenderName && senderName != null && senderName.isNotEmpty)
                       ? RichText(
                           text: TextSpan(
                             style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
