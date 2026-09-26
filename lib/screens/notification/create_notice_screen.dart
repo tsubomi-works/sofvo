@@ -104,6 +104,103 @@ class _CreateNoticeScreenState extends State<CreateNoticeScreen> {
     return '$y/$m/$d $hh:$mm';
   }
 
+  Future<void> _pickTournamentForLink() async {
+    final searchController = TextEditingController();
+    final picked = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20, right: 20, top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: Container(width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
+                  const SizedBox(height: 16),
+                  const Text('大会を選択', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: searchController,
+                    onChanged: (_) => setSheetState(() {}),
+                    decoration: InputDecoration(
+                      hintText: '大会名で検索',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      filled: true,
+                      fillColor: AppTheme.backgroundColor,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: FutureBuilder<QuerySnapshot>(
+                      future: FirebaseFirestore.instance
+                          .collection('tournaments')
+                          .orderBy('date', descending: true)
+                          .limit(100)
+                          .get(),
+                      builder: (context, snap) {
+                        if (!snap.hasData) {
+                          return const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor));
+                        }
+                        final keyword = searchController.text.trim();
+                        final docs = snap.data!.docs.where((d) {
+                          if (keyword.isEmpty) return true;
+                          final title = ((d.data() as Map<String, dynamic>)['title'] ?? '').toString();
+                          return title.contains(keyword);
+                        }).toList();
+                        if (docs.isEmpty) {
+                          return Center(child: Text('大会が見つかりません', style: TextStyle(color: AppTheme.textSecondary)));
+                        }
+                        return ListView.separated(
+                          controller: scrollController,
+                          itemCount: docs.length,
+                          separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey[100]),
+                          itemBuilder: (context, i) {
+                            final d = docs[i];
+                            final data = d.data() as Map<String, dynamic>;
+                            final title = (data['title'] ?? '').toString();
+                            final date = (data['date'] ?? '').toString();
+                            return ListTile(
+                              title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                              subtitle: date.isNotEmpty ? Text(date, style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)) : null,
+                              onTap: () => Navigator.pop(ctx, {'id': d.id, 'title': title}),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    searchController.dispose();
+    if (picked == null || !mounted) return;
+    final id = picked['id'] as String;
+    setState(() {
+      _linkController.text = 'https://sofvo.com/?t=$id';
+      if (_linkLabelController.text.trim().isEmpty) {
+        _linkLabelController.text = '大会の詳細を見る';
+      }
+    });
+  }
+
   bool _isValidUrl(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
@@ -393,6 +490,17 @@ class _CreateNoticeScreenState extends State<CreateNoticeScreen> {
 
             // リンクURL（任意）
             Text('リンクURL（任意）', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textSecondary)),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _pickTournamentForLink,
+              icon: const Icon(Icons.emoji_events_outlined, size: 18, color: AppTheme.primaryColor),
+              label: const Text('大会を選んでリンクを自動入力', style: TextStyle(fontSize: 13, color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 42),
+                side: const BorderSide(color: AppTheme.primaryColor),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _linkController,

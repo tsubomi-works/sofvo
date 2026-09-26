@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import '../../config/app_theme.dart';
-import '../../widgets/progress_overlay.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
 import '../profile/user_profile_screen.dart';
 import '../team/team_management_screen.dart';
+import '../tournament/tournament_detail_screen.dart';
 
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -121,9 +120,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final type = data['type'] ?? '';
     final senderId = data['senderId'] as String?;
 
-    // 大会エントリーの招待 → 承認 / 辞退ダイアログ
+    // 大会エントリーの招待 → 大会詳細へ（承認/辞退は詳細画面のエントリーカードで行う）
     if (type == 'entry_invite') {
-      // 取り消し済み・対応済みの招待は承認/辞退できないので案内だけ出す
+      // 取り消し済み・対応済みの招待は案内だけ出す
       if (data['canceled'] == true || data['resolved'] == true) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(data['canceled'] == true ? 'この招待は取り消されました' : 'この招待は対応済みです'),
@@ -131,7 +130,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         ));
         return;
       }
-      await _showEntryInviteDialog(data);
+      final tournamentId = (data['tournamentId'] ?? '').toString();
+      if (tournamentId.isEmpty) return;
+      await _openTournamentDetail(tournamentId);
       return;
     }
 
@@ -158,73 +159,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
-  Future<void> _showEntryInviteDialog(Map<String, dynamic> data) async {
-    final tournamentId = (data['tournamentId'] ?? '').toString();
-    final draftId = (data['draftId'] ?? '').toString();
-    final teamName = (data['teamName'] ?? '').toString();
-    final tournamentName = (data['tournamentName'] ?? '').toString();
-    final senderName = (data['senderName'] ?? '').toString();
-    if (tournamentId.isEmpty || draftId.isEmpty) return;
-
-    // 招待を開いた＝既読としてキャプテン・主催者に見えるようにする（失敗しても無視）
-    FirebaseFunctions.instance.httpsCallable('markEntryDraftSeen').call({
-      'tournamentId': tournamentId,
-      'draftId': draftId,
-    }).then<void>((_) {}, onError: (_) {});
-
-    final approve = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('大会エントリーへの招待', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('$senderName さんから、大会「$tournamentName」のチーム「$teamName」に招待されています。'),
-            const SizedBox(height: 10),
-            const Text('参加を承認しますか？ 全員の承認でエントリーが成立します。',
-                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-            const SizedBox(height: 6),
-            const Text('エントリーが成立すると、大会の告知が届くように主催者を自動でフォローします。',
-                style: TextStyle(fontSize: 12, color: AppTheme.textHint)),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('辞退する', style: TextStyle(color: AppTheme.error))),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor, foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-            child: const Text('承認する', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-    if (approve == null || !mounted) return;
-
+  Future<void> _openTournamentDetail(String tournamentId) async {
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('respondEntryInvite');
-      final res = await runWithProgress(context,
-          () => callable.call({'tournamentId': tournamentId, 'draftId': draftId, 'approve': approve}),
-          message: approve ? '承認しています…' : '辞退しています…');
-      final finalized = (res.data as Map)['finalized'] == true;
-      final memberAdd = (res.data as Map)['memberAdd'] == true;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(!approve
-            ? '招待を辞退しました'
-            : memberAdd
-                ? 'チームに参加しました！'
-                : finalized
-                    ? 'エントリーが成立しました！'
-                    : '承認しました。他のメンバーの承認を待っています'),
-        backgroundColor: approve ? AppTheme.success : AppTheme.textSecondary,
+      final doc = await FirebaseFirestore.instance.collection('tournaments').doc(tournamentId).get();
+      if (!doc.exists || !mounted) return;
+      final data = doc.data()!;
+      data['id'] = doc.id;
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => TournamentDetailScreen(tournament: data),
       ));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('処理に失敗しました。招待が取り消された可能性があります'), backgroundColor: AppTheme.error));
+        content: Text('大会情報の取得に失敗しました'), backgroundColor: AppTheme.error));
     }
   }
 

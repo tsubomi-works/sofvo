@@ -53,6 +53,10 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   // 承認待ちエントリー招待を「開いた（既読）」記録の二重送信防止
   final Set<String> _markedSeenDraftIds = {};
 
+  // キャプテン向け承認待ちカードのメンバー一覧展開状態（draftId単位）。
+  // 展開すると縦に長くなり大会情報が見えなくなるため、既定は折りたたみ。
+  final Set<String> _expandedEntryDrafts = {};
+
   void _markEntryDraftSeenIfNeeded(String draftId) {
     if (_markedSeenDraftIds.contains(draftId)) return;
     _markedSeenDraftIds.add(draftId);
@@ -6530,18 +6534,43 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    const Icon(Icons.how_to_reg, size: 18, color: AppTheme.primaryColor),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(isMemberAdd ? '追加メンバーの承認待ち「$teamName」' : '承認待ちエントリー「$teamName」',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
-                    ),
-                    Text('承認 $approvedCount/$activeCount',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
-                  ]),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: isLeader
+                        ? () => setState(() {
+                              if (_expandedEntryDrafts.contains(d.id)) {
+                                _expandedEntryDrafts.remove(d.id);
+                              } else {
+                                _expandedEntryDrafts.add(d.id);
+                              }
+                            })
+                        : null,
+                    child: Row(children: [
+                      const Icon(Icons.how_to_reg, size: 18, color: AppTheme.primaryColor),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(isMemberAdd ? '追加メンバーの承認待ち「$teamName」' : '承認待ちエントリー「$teamName」',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+                      ),
+                      Text('承認 $approvedCount/$activeCount',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
+                      if (isLeader) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          _expandedEntryDrafts.contains(d.id) ? Icons.expand_less : Icons.expand_more,
+                          size: 20, color: AppTheme.primaryColor,
+                        ),
+                      ],
+                    ]),
+                  ),
+                  if (isLeader && !_expandedEntryDrafts.contains(d.id)) ...[
+                    const SizedBox(height: 2),
+                    Text('タップしてメンバーの承認状況を見る',
+                        style: TextStyle(fontSize: 11, color: AppTheme.textHint)),
+                  ],
                   const SizedBox(height: 8),
                   if (isLeader) ...[
+                    if (_expandedEntryDrafts.contains(d.id)) ...[
                     // キャプテン視点：主催者向けシートと同じ見た目（写真・状態バッジ・進捗バー）
                     _draftProgressBox(approvedCount: approvedCount, totalCount: activeCount),
                     const SizedBox(height: 4),
@@ -6596,6 +6625,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                         ),
                       ],
                     ),
+                    ],
                   ] else if (myState == 'pending') ...[
                     // 招待メンバー視点：承認 / 辞退
                     Text('${(data['leaderName'] ?? '').toString()} さんから招待されています', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),

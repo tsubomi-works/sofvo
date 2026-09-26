@@ -17,6 +17,7 @@ import '../recruitment/recruitment_screen.dart';
 import '../chat/chat_list_screen.dart';
 import '../profile/my_page_screen.dart';
 import '../profile/profile_completion_screen.dart';
+import '../../services/notification_service.dart';
 
 class MainTabScreen extends StatefulWidget {
   const MainTabScreen({super.key});
@@ -285,6 +286,19 @@ class _BottomNavState extends State<_BottomNav>
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
+    // ホームタブのバッジ = ベル通知（対人アクション）＋お知らせタブの未読合計
+    return StreamBuilder<int>(
+      stream: uid.isNotEmpty
+          ? NotificationService.unreadCountStream(uid)
+          : Stream.value(0),
+      builder: (context, actionSnap) {
+        return StreamBuilder<int>(
+          stream: uid.isNotEmpty
+              ? NotificationService.unreadAnnouncementCountStream(uid)
+              : Stream.value(0),
+          builder: (context, announceSnap) {
+            final homeBadge = (actionSnap.data ?? 0) + (announceSnap.data ?? 0);
+
     return StreamBuilder<QuerySnapshot>(
       stream: uid.isNotEmpty
           ? FirebaseFirestore.instance
@@ -315,7 +329,7 @@ class _BottomNavState extends State<_BottomNav>
         }
 
         final items = <_NavItemData>[
-          const _NavItemData(Icons.home_outlined, Icons.home, 'ホーム'),
+          _NavItemData(Icons.home_outlined, Icons.home, 'ホーム', badge: homeBadge),
           const _NavItemData(Icons.search_outlined, Icons.search, 'さがす'),
           const _NavItemData(Icons.calendar_today_outlined, Icons.calendar_today, 'マイ大会'),
           _NavItemData(Icons.chat_bubble_outline, Icons.chat_bubble, 'チャット', badge: unreadCount),
@@ -486,6 +500,10 @@ class _BottomNavState extends State<_BottomNav>
               );
             },
           ),
+        );
+      },
+    );
+          },
         );
       },
     );
