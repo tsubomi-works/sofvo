@@ -84,7 +84,14 @@ class SponsorBanner extends StatefulWidget {
   /// 表示位置: "home_top", "home_bottom", "tournament_list", "chat_list"
   final String placement;
 
-  const SponsorBanner({super.key, this.placement = 'home_top'});
+  /// 左右の余白。親リストがすでに左右パディングを持つ場合は 0 を渡す
+  final double horizontalPadding;
+
+  const SponsorBanner({
+    super.key,
+    this.placement = 'home_top',
+    this.horizontalPadding = 16,
+  });
 
   @override
   State<SponsorBanner> createState() => _SponsorBannerState();
@@ -311,7 +318,7 @@ class _SponsorBannerState extends State<SponsorBanner> {
             : pagerHeight;
 
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: EdgeInsets.symmetric(horizontal: widget.horizontalPadding),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

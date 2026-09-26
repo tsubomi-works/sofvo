@@ -689,12 +689,16 @@ class _HomeScreenState extends State<HomeScreen>
           child: ListView.separated(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.only(top: 4, bottom: 92 + MediaQuery.of(context).padding.bottom),
-          itemCount: posts.length + 1,
+          // 先頭: ホーム上部広告 / 末尾: ホーム下部広告
+          itemCount: posts.length + 2,
           separatorBuilder: (_, index) => index == 0
               ? const SizedBox.shrink()
               : Divider(height: 1, thickness: 1, color: Colors.grey[100]),
           itemBuilder: (context, index) {
             if (index == 0) return const SponsorBanner();
+            if (index == posts.length + 1) {
+              return const SponsorBanner(placement: 'home_bottom');
+            }
             final data =
                 posts[index - 1].data() as Map<String, dynamic>? ?? {};
             return _buildPostItem(posts[index - 1].id, data);

@@ -5,6 +5,7 @@ import '../../config/app_theme.dart';
 import '../../services/push_notification_service.dart';
 import '../../widgets/empty_state_view.dart';
 import '../../widgets/official_badge.dart';
+import '../../widgets/sponsor_banner.dart';
 import 'chat_screen.dart';
 import 'create_group_chat_screen.dart';
 import '../follow/follow_search_screen.dart';
@@ -522,6 +523,8 @@ class _ChatListScreenState extends State<ChatListScreen>
             ]),
           ),
           ),
+          // スポンサー広告（表示位置「チャット一覧」「全画面」。該当なしなら高さ0）
+          const SponsorBanner(placement: 'chat_list'),
           Expanded(
             child: TabBarView(
               controller: _tabController,
