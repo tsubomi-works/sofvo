@@ -160,6 +160,128 @@ return Listener(
 ```
 （`_glassCtrl` は 180ms の `AnimationController`。タブ切替時のパルスと `max()` で合成して `glass` にしている）
 
+### ⑦ 泡の完成コード（Sofvo で iPhone 実機確認済みのものをそのまま）
+③の抜粋だけだと周りの装飾（白い縁取り・静止時の薄いピル）の組み方が分からず、**白い不透明な泡になる**事故が起きた（2026-09-27 に別アプリで発生）。
+**このクラスを丸ごとコピーして使うこと**。親側は `Transform.scale(... child: _LiquidCapsule(glass: glass))` で包むだけ。
+必要な import: `dart:ui`（`ImageFilter`）、`package:flutter/foundation.dart`（`kIsWeb`）、`package:liquid_glass_widgets/liquid_glass_widgets.dart`。
+
+```dart
+class _LiquidCapsule extends StatelessWidget {
+  const _LiquidCapsule({required this.glass});
+
+  /// 0 = 静止（透明なガラスのピル）〜 1 = 移動中のピーク（ガラスの水滴）
+  final double glass;
+
+  // ネイティブの泡のガラス設定。中身はくっきり（blur 0）、
+  // 縁で強く曲げて虹色ににじませる
+  static const _bubbleSettings = LiquidGlassSettings(
+    thickness: 30,
+    refractiveIndex: 1.25,
+    chromaticAberration: 0.25,
+    blur: 0,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final fill = DecoratedBox(
+      decoration: BoxDecoration(
+        // 静止時: 輪郭が分かる程度のごく薄いグレー。
+        // 移動中はフェードアウトして完全に無色のガラスにする
+        // （グレーを残すと泡全体が灰色がかって見える）
+        color: Colors.black.withValues(alpha: 0.06 * (1 - glass)),
+        borderRadius: BorderRadius.circular(25),
+      ),
+      // 上面の白い反射（ガラスの照り）— ごく控えめ。強くすると霧の玉になる
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(25),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: 0.18 * glass),
+              Colors.white.withValues(alpha: 0.0),
+            ],
+            stops: const [0.0, 0.5],
+          ),
+        ),
+      ),
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        // 高さの半分以上の角丸で常に完全なカプセル形
+        borderRadius: BorderRadius.circular(26),
+        // 移動中だけ縁が白く光る（色は付けない・静止時は透明）
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: 0.90 * glass),
+            Colors.white.withValues(alpha: 0.25 * glass),
+            Colors.white.withValues(alpha: 0.12 * glass),
+            Colors.white.withValues(alpha: 0.28 * glass),
+            Colors.white.withValues(alpha: 0.70 * glass),
+          ],
+          stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
+        ),
+        // 影は付けない: 半透明の泡は影が中身から透けて全体が
+        // 灰色がかって見えるため（輪郭は縁の白いハイライトが担う）
+      ),
+      child: Padding(
+        // 縁の線の太さ（グラデーションが見える幅）
+        padding: const EdgeInsets.all(1.4),
+        // 静止時はレンズ類を一切組み込まない（コスト削減＋濁り防止）
+        child: glass < 0.01
+            ? fill
+            : !kIsWeb
+                ? AdaptiveGlass(
+                    shape: const LiquidRoundedRectangle(borderRadius: 999),
+                    settings: _bubbleSettings.copyWith(visibility: glass),
+                    quality: GlassQuality.premium,
+                    child: const SizedBox.expand(),
+                  )
+                : LayoutBuilder(builder: (context, c) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(25),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // 本物のレンズ: 泡の下のコンテンツ（アイコン）を屈折拡大する
+                      // （RawMagnifier = BackdropFilter の行列変換。シェーダー不要）
+                      RawMagnifier(
+                        size: Size(c.maxWidth, c.maxHeight),
+                        magnificationScale: 1 + 0.35 * glass,
+                        decoration: const MagnifierDecoration(
+                          shape: StadiumBorder(),
+                        ),
+                      ),
+                      // ごくわずかな曇りだけ乗せる。強いぼかしは拡大した
+                      // アイコンを消して「霧の玉」になるので厳禁
+                      BackdropFilter(
+                        filter: ImageFilter.blur(
+                            sigmaX: 1.5 * glass, sigmaY: 1.5 * glass),
+                        child: fill,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+      ),
+    );
+  }
+}
+```
+
+### うまくいかないとき（症状 → 原因）
+| 症状 | よくある原因 | 直し方 |
+|---|---|---|
+| **泡が真っ白で不透明**。後ろのアイコンが見えない・端で切れる。影だけ付いている | ① 泡の中に**白い塗り**が残っている（静止時のピルの色を白にした／`Container(color: Colors.white)` を重ねた／`LiquidGlassSettings` に `glassColor` で白を指定した）<br>② `AdaptiveGlass` ではなく、普通の `Container`＋`BoxShadow` で泡を描いている | 上の完成コードに置き換える。泡の中の塗りは**黒 6%×(1−glass)** だけ。移動中は色ゼロ（無色） |
+| 泡は透けるが、曲がらない・虹色が出ない | ① `quality: GlassQuality.premium` になっていない<br>② `LiquidGlassWidgets.initialize()` と `LiquidGlassWidgets.wrap()` を `main()` に入れていない<br>③ **Web / PWA / シミュレーターで見ている**（フル品質は iPhone・Android の実機アプリだけ） | ②の `main.dart` を確認。**必ず実機（TestFlight）で見る** |
+| 泡がバーの**下**に隠れる／アイコンが曲がらない | 描画順が逆（泡がアイコンより先に描かれている） | Stack の順番を「バー背景 → アイコン → 泡」にする（④） |
+| 泡が端で四角く切れる | 親の `Stack` や `ClipRRect` で切っている | 外側の `Stack(clipBehavior: Clip.none)`。泡の周りに `ClipRRect` を入れない |
+| 押しても膨らまない | `Listener` を入れていない／`GestureDetector` の内側に入れている | ⑥のとおり**一番外側**を `Listener` で包む |
+| 泡が丸すぎる | `scaleY` が大きい | `scaleX: 1 + 0.55*glass` / `scaleY: 1 + 0.50*glass` |
+
 ### 確認方法
 - **Web やシミュレーターのスクショでは判断できない**（軽量描画になる）。**iPhone 実機**で見る
 - Sofvo では TestFlight（GitHub Actions の `ci_beta`）で上げて確認した
