@@ -66,6 +66,11 @@ iOS 26 の Liquid Glass の**本来の挙動**に合わせる: **静止時はた
 iOS 26 の純正タブバー（Chatwork 等）で、タブを押す・なぞると出る **「ぬるっと膨らんで、縁でアイコンがグニャッと曲がり、虹色ににじむ泡」** を再現する方法。
 **バー本体は自作の浮島（上の汎用版）のまま、泡だけを差し替える**のがポイント。
 
+> ⚠️ **この節の方法は iPhone / Android のアプリ専用です。Web 版（ブラウザ・ホーム画面に追加した PWA）では本物の Liquid Glass は出ません**（2026-09-27、別アプリの Web 版で試して白い泡になった）。
+> - Flutter Web：ガラスシェーダーのフル品質（Impeller）が動かない。`AdaptiveGlass` は白っぽい簡易表示になる → Web は `RawMagnifier` 版（下の「汎用版コード」）を使う
+> - HTML/CSS の Web：縁で背景を曲げるには SVG フィルタ（`backdrop-filter: url(#displace)`）が必要だが、**iPhone の Safari は非対応**
+> - Web で近づける方法：泡の中は**塗らずに透明**（`backdrop-filter: blur(2px) saturate(180%)` 程度）＋縁に白いハイライト（`inset` の box-shadow）＋**泡の中にタブのアイコン列を 1.15 倍に拡大して複製し、泡の形で切り抜く**（中身が拡大して見える）＋縁の内側に薄い赤・青のにじみ（`inset` の色付き box-shadow を左右にずらす）。屈折そのものは出ないが、白い箱よりずっとガラスらしくなる
+
 ### 結論（3行）
 1. pub パッケージ **`liquid_glass_widgets`**（MIT・Flutter 3.41 以上）を入れる
 2. 泡の中身を **`AdaptiveGlass`**（ガラスシェーダー）で描く。**ネイティブ（iOS/Android）だけ**。Web は従来の `RawMagnifier` 近似のまま
