@@ -3516,10 +3516,11 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
     try {
       const meSnap = await db.collection("users").doc(uid).get();
       const myName = (meSnap.exists && meSnap.data().nickname) || "メンバー";
+      const myAvatar = (meSnap.exists && meSnap.data().avatarUrl) || "";
       await db.collection("users").doc(result.draft.leaderUid).collection("notifications").add({
         type: result.finalized ? "entry_confirmed" : "entry_declined",
         tournamentId, teamName: result.teamName,
-        senderId: uid, senderName: myName, senderAvatar: "",
+        senderId: uid, senderName: myName, senderAvatar: myAvatar,
         message: result.finalized
           ? `がチーム「${result.teamName}」への追加を承認しました`
           : `がチーム「${result.teamName}」への追加を辞退しました`,
@@ -3556,10 +3557,11 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
     try {
       const meSnap = await db.collection("users").doc(uid).get();
       const myName = (meSnap.exists && meSnap.data().nickname) || "メンバー";
+      const myAvatar = (meSnap.exists && meSnap.data().avatarUrl) || "";
       await db.collection("users").doc(draft.leaderUid).collection("notifications").add({
         type: "entry_declined",
         tournamentId, teamName: draft.teamName,
-        senderId: uid, senderName: myName, senderAvatar: "",
+        senderId: uid, senderName: myName, senderAvatar: myAvatar,
         message: `が大会チーム「${draft.teamName}」の招待を辞退しました`,
         read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -3572,10 +3574,11 @@ exports.respondEntryInvite = functions.https.onCall(async (data, context) => {
       try {
         const meSnap = await db.collection("users").doc(uid).get();
         const myName = (meSnap.exists && meSnap.data().nickname) || "メンバー";
+        const myAvatar = (meSnap.exists && meSnap.data().avatarUrl) || "";
         await db.collection("users").doc(draft.leaderUid).collection("notifications").add({
           type: "entry_confirmed",
           tournamentId, teamName: draft.teamName,
-          senderId: uid, senderName: myName, senderAvatar: "",
+          senderId: uid, senderName: myName, senderAvatar: myAvatar,
           message: `がチーム「${draft.teamName}」への参加を承認しました`,
           read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -3621,6 +3624,7 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
     throw new functions.https.HttpsError("permission-denied", "代理承認できるのは主催者・管理者のみです");
   }
   const callerName = (callerSnap.data() || {}).nickname || "管理者";
+  const callerAvatar = (callerSnap.data() || {}).avatarUrl || "";
 
   const result = await db.runTransaction(async (tx) => {
     const draftSnap = await tx.get(draftRef);
@@ -3714,7 +3718,7 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
   try {
     await db.collection("users").doc(targetUid).collection("notifications").add({
       type: "entry_confirmed",
-      senderId: callerUid, senderName: callerName, senderAvatar: "",
+      senderId: callerUid, senderName: callerName, senderAvatar: callerAvatar,
       tournamentId, tournamentName: tNameForNotify, teamName: result.teamName,
       message: result.finalized
         ? `がチーム「${result.teamName}」への参加を代わりに承認し、エントリーが成立しました`
@@ -3734,7 +3738,7 @@ exports.adminApproveEntryDraftMember = functions.https.onCall(async (data, conte
         const targetName = (draftPre.memberNames || {})[targetUid] || "メンバー";
         await db.collection("users").doc(leaderUid).collection("notifications").add({
           type: "entry_confirmed",
-          senderId: callerUid, senderName: callerName, senderAvatar: "",
+          senderId: callerUid, senderName: callerName, senderAvatar: callerAvatar,
           tournamentId, tournamentName: tNameForNotify, teamName: result.teamName,
           message: `が「${targetName}」さんの参加を代わりに承認しました（チーム「${result.teamName}」）`,
           read: false, createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -5646,6 +5650,7 @@ exports.sendOfficialNotification = functions.https.onCall(async (data, context) 
 
   // 全ユーザーに通知
   const usersSnap = await db.collection("users").get();
+  const official = await resolveOfficialAuthor(db);
   let count = 0;
   const batchSize = 500;
   let batch = db.batch();
@@ -5656,9 +5661,9 @@ exports.sendOfficialNotification = functions.https.onCall(async (data, context) 
     const notifRef = db.collection("users").doc(uid).collection("notifications").doc();
     batch.set(notifRef, {
       type: "official",
-      senderId: "sofvo_official",
-      senderName: "Sofvo公式",
-      senderAvatar: "",
+      senderId: (official && official.uid) || "sofvo_official",
+      senderName: (official && official.name) || "Sofvo公式",
+      senderAvatar: (official && official.avatar) || "",
       message: `【${title}】${message}`,
       read: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
