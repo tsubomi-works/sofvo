@@ -1293,6 +1293,12 @@ class _TournamentSearchScreenState extends State<TournamentSearchScreen>
             if (status == '終了' && !_showPastTournaments) return false;
             if (status == '準備中') return false;
           }
+          // 開催日が過ぎた大会は「過去の大会を表示」オフなら隠す
+          // （ステータスが「終了」に更新されていない大会も含む。進行中は除く）
+          if (!_showPastTournaments && !isInProgress) {
+            final d = _parseDate((data['date'] ?? '').toString());
+            if (d != null && d.isBefore(DateTime(now.year, now.month, now.day))) return false;
+          }
           if (query.isNotEmpty) {
             final t = (data['title'] ?? '').toString().toLowerCase();
             final l = (data['location'] ?? '').toString().toLowerCase();
