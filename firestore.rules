@@ -30,15 +30,6 @@ service cloud.firestore {
         || isOfficialUser();
     }
 
-    // 対戦表・スコア（rounds / brackets 配下）の書き込み可否。
-    // 大会設定 scoreInputStaffOnly == true のときは主催者・編集者・管理者・公式のみ。
-    // それ以外は従来どおりログインユーザー（参加チーム・審判チームの入力）を許可
-    function canWriteMatchData(tournamentId) {
-      let t = get(/databases/$(database)/documents/tournaments/$(tournamentId)).data;
-      return t.get('scoreInputStaffOnly', false) != true
-        || canManageTournamentById(tournamentId);
-    }
-
     // ━━━ ユーザー ━━━
     match /users/{userId} {
       allow read: if isAuthenticated();
@@ -167,22 +158,22 @@ service cloud.firestore {
       // ラウンド
       match /rounds/{roundId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated() && canWriteMatchData(tournamentId);
+        allow write: if isAuthenticated();
 
         match /{document=**} {
           allow read: if isAuthenticated();
-          allow write: if isAuthenticated() && canWriteMatchData(tournamentId);
+          allow write: if isAuthenticated();
         }
       }
 
       // ブラケット（決勝トーナメント）
       match /brackets/{bracketId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated() && canWriteMatchData(tournamentId);
+        allow write: if isAuthenticated();
 
         match /{document=**} {
           allow read: if isAuthenticated();
-          allow write: if isAuthenticated() && canWriteMatchData(tournamentId);
+          allow write: if isAuthenticated();
         }
       }
 

@@ -106,8 +106,6 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
   bool _officialFollowListenerRegistered = false;
   final _firestore = FirebaseFirestore.instance;
   List<String> _myTeamIds = [];
-  // 大会設定「得点入力を運営のみにする」（tournaments/{id}.scoreInputStaffOnly）。対戦表タブの描画時に更新
-  bool _scoreInputStaffOnly = false;
   final _postController = TextEditingController();
   bool _isBoardTeam = false; // false=大会掲示板, true=チーム掲示板
   XFile? _selectedBoardImage;
@@ -1235,7 +1233,6 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
         final tournEditors = List<String>.from(tournData['editors'] ?? []);
         final isOrganizer = _canManageTournament(tournData);
         final status = normalizeTournamentStatus(tournData['status'] ?? '準備中');
-        _scoreInputStaffOnly = tournData['scoreInputStaffOnly'] == true;
 
         return StreamBuilder<QuerySnapshot>(
           stream: _firestore.collection('tournaments').doc(_tournamentId).collection('rounds').snapshots(),
@@ -3343,13 +3340,11 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
           final prevDone = matchOrd <= 1 || (prevMatch != null && (prevMatch.data() as Map<String, dynamic>)['status'] == 'completed');
           final isReferee = _myTeamIds.contains(m['refereeTeamId'] ?? '') || _myTeamIds.contains(m['subRefereeTeamId'] ?? '');
           final isMyMatch = _myTeamIds.contains(m['teamAId'] ?? '') || _myTeamIds.contains(m['teamBId'] ?? '') || isReferee;
-          // 運営のみモードでは参加チーム・審判チームは入力不可（主催者・編集者・管理者のみ）
-          final participantCanInput = isMyMatch && !_scoreInputStaffOnly;
-          final canInput = isOrganizer || participantCanInput;
+          final canInput = isOrganizer || isMyMatch;
           final isCompleted = status == 'completed';
           final (hasInput, provSetsA, provSetsB) = _matchProgress(m);
           final isInProgress = !isCompleted && hasInput;
-          final isNextToInput = !isCompleted && !isInProgress && prevDone && participantCanInput;
+          final isNextToInput = !isCompleted && !isInProgress && prevDone && isMyMatch;
           return InkWell(
             onTap: () {
               // 終了した大会はスコアを閲覧のみ可能
@@ -3366,12 +3361,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("この試合は確定済みです。編集は大会主催者のみ可能です"), backgroundColor: AppTheme.warning));
                 return;
               }
-              if (!canInput) {
-                if (isMyMatch && _scoreInputStaffOnly) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("この大会の得点入力は運営（主催者・編集者）のみ可能です"), backgroundColor: AppTheme.warning));
-                }
-                return;
-              }
+              if (!canInput) return;
               if (!prevDone) {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("前の試合が完了してから入力してください"), backgroundColor: AppTheme.warning));
                 return;
@@ -3721,14 +3711,13 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
 
             final isReferee = _myTeamIds.contains(m['refereeTeamId'] ?? '') || _myTeamIds.contains(m['subRefereeTeamId'] ?? '');
             final isMyMatch = _myTeamIds.contains(m['teamAId'] ?? '') || _myTeamIds.contains(m['teamBId'] ?? '') || isReferee;
-            final participantCanInput = isMyMatch && !_scoreInputStaffOnly;
-            final canInput = isOrganizer || participantCanInput;
+            final canInput = isOrganizer || isMyMatch;
             final isCompleted = status == 'completed';
             final isWaiting = status == 'waiting';
             final (hasInput, provSetsA, provSetsB) = _matchProgress(m);
             final isInProgress = !isCompleted && !isWaiting && hasInput;
             final prevDone = idx <= 0 || ((courtMatchList[idx - 1].data() as Map<String, dynamic>)['status'] == 'completed');
-            final isNextToInput = !isCompleted && !isWaiting && !isInProgress && prevDone && participantCanInput;
+            final isNextToInput = !isCompleted && !isWaiting && !isInProgress && prevDone && isMyMatch;
 
             String teamADisplay = (m['teamAId'] ?? '').isEmpty ? _friendlyPlaceholder(m['teamAName'] ?? '') : (m['teamAName'] ?? '');
             String teamBDisplay = (m['teamBId'] ?? '').isEmpty ? _friendlyPlaceholder(m['teamBName'] ?? '') : (m['teamBName'] ?? '');
@@ -3754,12 +3743,7 @@ class _TournamentDetailScreenState extends State<TournamentDetailScreen>
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("この試合は確定済みです"), backgroundColor: AppTheme.warning));
                   return;
                 }
-                if (!canInput) {
-                  if (isMyMatch && _scoreInputStaffOnly) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("この大会の得点入力は運営（主催者・編集者）のみ可能です"), backgroundColor: AppTheme.warning));
-                  }
-                  return;
-                }
+                if (!canInput) return;
                 if (!prevDone) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("前の試合が完了してから入力してください"), backgroundColor: AppTheme.warning));
                   return;
@@ -10470,44 +10454,6 @@ class _EditorsScreenState extends State<_EditorsScreen> {
         children: [
           Text('編集権限を持つユーザーは大会情報を編集できます', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
           const SizedBox(height: 16),
-
-          // 得点入力の権限（大規模大会向け：入力ミス・管理不能を防ぐため運営のみに限定できる）
-          StreamBuilder<DocumentSnapshot>(
-            stream: _firestore.collection('tournaments').doc(widget.tournamentId).snapshots(),
-            builder: (context, snap) {
-              final tournData = snap.data?.data() as Map<String, dynamic>? ?? {};
-              final staffOnly = tournData['scoreInputStaffOnly'] == true;
-              return Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: Colors.grey[200]!),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: SwitchListTile(
-                  value: staffOnly,
-                  activeColor: AppTheme.primaryColor,
-                  title: const Text('得点入力を運営のみにする', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                    staffOnly
-                        ? '主催者・編集者だけが得点を入力・修正できます。参加チーム・審判チームは閲覧のみです'
-                        : '主催者・編集者に加えて、各試合の参加チーム・審判チームも自分の試合の得点を入力できます',
-                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                  ),
-                  onChanged: !snap.hasData ? null : (v) async {
-                    try {
-                      await _firestore.collection('tournaments').doc(widget.tournamentId).update({'scoreInputStaffOnly': v});
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('設定を保存できませんでした: $e'), backgroundColor: AppTheme.error),
-                      );
-                    }
-                  },
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 24),
 
           // 現在の編集者リスト
           StreamBuilder<DocumentSnapshot>(
